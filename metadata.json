@@ -1,0 +1,6 @@
+{
+  "name": "Call Notes & Quick Share",
+  "description": "Post-call popup overlay to quickly save notes, assign tags, send showroom WhatsApp messages, and stream call metadata to a backend via WebSocket.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
