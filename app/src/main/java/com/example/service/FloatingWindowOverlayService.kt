@@ -5,8 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.ui.platform.ComposeView
@@ -25,6 +28,8 @@ class FloatingWindowOverlayService : Service(), LifecycleOwner, SavedStateRegist
 
     private var windowManager: WindowManager? = null
     private var overlayView: ComposeView? = null
+    private var overlayThread: HandlerThread? = null
+    private var overlayHandler: Handler? = null
 
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
@@ -36,6 +41,7 @@ class FloatingWindowOverlayService : Service(), LifecycleOwner, SavedStateRegist
         get() = savedStateRegistryController.savedStateRegistry
 
     companion object {
+        private const val TAG = "FloatingWindowOverlay"
         const val EXTRA_PHONE_NUMBER = "extra_phone_number"
         const val EXTRA_DURATION_SECONDS = "extra_duration_seconds"
         const val EXTRA_CALL_TYPE = "extra_call_type"
@@ -57,7 +63,12 @@ class FloatingWindowOverlayService : Service(), LifecycleOwner, SavedStateRegist
                 putExtra(EXTRA_START_TIME, startTime)
                 putExtra(EXTRA_END_TIME, endTime)
             }
-            context.startService(intent)
+            try {
+                val result = context.startService(intent)
+                Log.i(TAG, "show(): startService returned $result for number=$phoneNumber")
+            } catch (e: Exception) {
+                Log.e(TAG, "show(): startService threw", e)
+            }
         }
     }
 
@@ -66,6 +77,11 @@ class FloatingWindowOverlayService : Service(), LifecycleOwner, SavedStateRegist
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+
+        val thread = HandlerThread("FloatingOverlayWindowThread")
+        thread.start()
+        overlayThread = thread
+        overlayHandler = Handler(thread.looper)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -78,13 +94,30 @@ class FloatingWindowOverlayService : Service(), LifecycleOwner, SavedStateRegist
         val startTime = intent?.getLongExtra(EXTRA_START_TIME, System.currentTimeMillis() - 45000L) ?: System.currentTimeMillis()
         val endTime = intent?.getLongExtra(EXTRA_END_TIME, System.currentTimeMillis()) ?: System.currentTimeMillis()
 
+        Log.i(TAG, "onStartCommand: number=$phoneNumber callType=$callType canDrawOverlays=${Settings.canDrawOverlays(this)}")
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
             // Permission revoked, stop self
+            Log.w(TAG, "onStartCommand: overlay permission not granted, stopping self")
             stopSelf()
             return START_NOT_STICKY
         }
 
-        showOverlay(phoneNumber, durationSeconds, callType, startTime, endTime)
+        // WindowManager.addView() for this overlay has been observed to hang indefinitely on
+        // at least one OEM build (Transsion/HiOS) - a Binder call to WindowManagerService that
+        // never returns. Since this Service shares a process (and therefore a main thread) with
+        // CallMonitorService, a hang here on the main thread would freeze call detection too.
+        // Doing the actual window work on a dedicated thread contains the damage to this one
+        // overlay attempt instead of the whole app.
+        val handler = overlayHandler
+        if (handler == null) {
+            Log.e(TAG, "onStartCommand: overlay handler not available, stopping self")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        handler.post {
+            showOverlay(phoneNumber, durationSeconds, callType, startTime, endTime)
+        }
         return START_NOT_STICKY
     }
 
@@ -137,8 +170,9 @@ class FloatingWindowOverlayService : Service(), LifecycleOwner, SavedStateRegist
         try {
             windowManager?.addView(composeView, params)
             overlayView = composeView
+            Log.i(TAG, "showOverlay: addView succeeded")
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "showOverlay: addView failed", e)
             stopSelf()
         }
     }
@@ -155,7 +189,8 @@ class FloatingWindowOverlayService : Service(), LifecycleOwner, SavedStateRegist
     }
 
     override fun onDestroy() {
-        removeOverlay()
+        overlayHandler?.post { removeOverlay() }
+        overlayThread?.quitSafely()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)

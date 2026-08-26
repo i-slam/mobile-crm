@@ -14,8 +14,8 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
-import android.os.Looper
 import android.provider.CallLog
 import android.telephony.PhoneStateListener
 import android.telephony.TelephonyCallback
@@ -35,6 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.concurrent.Executor
 
 class CallMonitorService : Service() {
 
@@ -42,6 +43,14 @@ class CallMonitorService : Service() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var callLogObserver: ContentObserver? = null
     private val scope = CoroutineScope(Dispatchers.IO + Job())
+
+    // Telephony callback + CallLog observer dispatch on a dedicated thread rather than main -
+    // this app's main thread has been observed to hang (a WindowManager overlay call blocking
+    // indefinitely on some OEM builds, see FloatingWindowOverlayService), and that must not be
+    // able to take call detection down with it.
+    private val detectionThread = HandlerThread("CallDetectionThread").apply { start() }
+    private val detectionHandler = Handler(detectionThread.looper)
+    private val detectionExecutor = Executor { runnable -> detectionHandler.post(runnable) }
 
     private var inServiceCallStartTime: Long = 0
     private var inServiceLastState: Int = TelephonyManager.CALL_STATE_IDLE
@@ -111,41 +120,54 @@ class CallMonitorService : Service() {
     }
 
     private fun registerTelephonyListener(attempt: Int = 1) {
-        val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager ?: return
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
-                    override fun onCallStateChanged(state: Int) {
-                        handleCallStateTransition(state, null)
-                    }
-                }
-                telephonyManager.registerTelephonyCallback(mainExecutor, callback)
-            } else {
-                @Suppress("DEPRECATION")
-                val listener = object : PhoneStateListener() {
-                    @Deprecated("Deprecated in Java")
-                    override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-                        handleCallStateTransition(state, phoneNumber)
-                    }
-                }
-                @Suppress("DEPRECATION")
-                telephonyManager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
+        // Registered (and, for the pre-API-31 listen() path, dispatched) from detectionHandler's
+        // thread rather than main - see the comment on detectionThread above.
+        detectionHandler.post {
+            val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+            if (telephonyManager == null) {
+                Log.w(TAG, "registerTelephonyListener: no TelephonyManager")
+                return@post
             }
-            Log.i(TAG, "Telephony listener registered (attempt $attempt)")
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not register TelephonyCallback (attempt $attempt): ${e.message}")
-            // Call detection is the whole point of this service - retry a couple of times
-            // rather than silently running with no listener for the rest of its lifetime.
-            if (attempt < 3) {
-                scope.launch {
-                    delay(2000L * attempt)
-                    registerTelephonyListener(attempt + 1)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+                        override fun onCallStateChanged(state: Int) {
+                            handleCallStateTransition(state, null)
+                        }
+                    }
+                    telephonyManager.registerTelephonyCallback(detectionExecutor, callback)
+                } else {
+                    @Suppress("DEPRECATION")
+                    val listener = object : PhoneStateListener() {
+                        @Deprecated("Deprecated in Java")
+                        override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                            handleCallStateTransition(state, phoneNumber)
+                        }
+                    }
+                    @Suppress("DEPRECATION")
+                    telephonyManager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
+                }
+                Log.i(TAG, "Telephony listener registered (attempt $attempt)")
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not register TelephonyCallback (attempt $attempt): ${e.message}")
+                // Call detection is the whole point of this service - retry a couple of times
+                // rather than silently running with no listener for the rest of its lifetime.
+                if (attempt < 3) {
+                    detectionHandler.postDelayed({ registerTelephonyListener(attempt + 1) }, 2000L * attempt)
                 }
             }
         }
     }
 
     private fun handleCallStateTransition(state: Int, incomingNumber: String?) {
+        val stateName = when (state) {
+            TelephonyManager.CALL_STATE_RINGING -> "RINGING"
+            TelephonyManager.CALL_STATE_OFFHOOK -> "OFFHOOK"
+            TelephonyManager.CALL_STATE_IDLE -> "IDLE"
+            else -> "UNKNOWN($state)"
+        }
+        Log.i(TAG, "handleCallStateTransition: state=$stateName incomingNumber=$incomingNumber prevState=$inServiceLastState")
+
         if (!incomingNumber.isNullOrBlank()) {
             inServiceIncomingNumber = incomingNumber
         }
@@ -176,6 +198,7 @@ class CallMonitorService : Service() {
                         if (inServiceLastState == TelephonyManager.CALL_STATE_RINGING) "MISSED" else "INCOMING"
                     } else "OUTGOING"
 
+                    Log.i(TAG, "IDLE after $inServiceLastState -> callType=$callType number=$inServiceIncomingNumber")
                     resolveAndShowPopup(
                         incomingNumber = inServiceIncomingNumber,
                         callStartTime = inServiceCallStartTime,
@@ -223,6 +246,7 @@ class CallMonitorService : Service() {
             val resolvedNumber = if (!targetNumber.isNullOrBlank()) targetNumber else "Unknown Number"
             val startTime = callStartTime.takeIf { it > 0 } ?: (endTime - (finalDuration * 1000L))
 
+            Log.i(TAG, "resolveAndShowPopup: resolvedNumber=$resolvedNumber callType=$callType duration=$finalDuration recentCallFromLog=$recentCall")
             showPopupForCall(resolvedNumber, finalDuration, callType, startTime, endTime)
         }
     }
@@ -240,7 +264,7 @@ class CallMonitorService : Service() {
             return
         }
         try {
-            val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            val observer = object : ContentObserver(detectionHandler) {
                 override fun onChange(selfChange: Boolean) {
                     super.onChange(selfChange)
                     checkForNewMissedCall()
@@ -248,6 +272,7 @@ class CallMonitorService : Service() {
             }
             contentResolver.registerContentObserver(CallLog.Calls.CONTENT_URI, true, observer)
             callLogObserver = observer
+            Log.i(TAG, "CallLog observer registered")
         } catch (e: Exception) {
             Log.w(TAG, "Could not register CallLog observer: ${e.message}")
         }
@@ -257,7 +282,9 @@ class CallMonitorService : Service() {
         scope.launch {
             // Give the content resolver a moment to settle after the change notification.
             delay(400)
-            val recent = CallLogHelper.getMostRecentCall(this@CallMonitorService) ?: return@launch
+            val recent = CallLogHelper.getMostRecentCall(this@CallMonitorService)
+            Log.i(TAG, "checkForNewMissedCall: recent=$recent lastHandledCallLogTimestamp=$lastHandledCallLogTimestamp")
+            if (recent == null) return@launch
             if (recent.callType != "MISSED") return@launch
             if (recent.timestampMillis <= lastHandledCallLogTimestamp) return@launch
             lastHandledCallLogTimestamp = recent.timestampMillis
@@ -286,9 +313,11 @@ class CallMonitorService : Service() {
         lastShownAtMillis = now
 
         val settings = CallRepository.getInstance(this).settings.value
+        val overlayGranted = PermissionUtils.isOverlayPermissionGranted(this)
+        Log.i(TAG, "showPopupForCall: number=$phoneNumber callType=$callType overlayEnabled=${settings.overlayEnabled} overlayPermissionGranted=$overlayGranted")
         if (!settings.overlayEnabled) return
 
-        if (PermissionUtils.isOverlayPermissionGranted(this)) {
+        if (overlayGranted) {
             // Reliable path: a TYPE_APPLICATION_OVERLAY window is exempt from the
             // Android 10+ background-activity-start restriction that would otherwise
             // silently block CallOverlayActivity from launching out of this service.
@@ -376,6 +405,7 @@ class CallMonitorService : Service() {
                 // ignore
             }
         }
+        detectionThread.quitSafely()
         isRunning = false
         super.onDestroy()
     }
