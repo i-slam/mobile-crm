@@ -26,6 +26,7 @@ import com.example.websocket.CallWebSocketClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class CallMonitorService : Service() {
@@ -95,7 +96,7 @@ class CallMonitorService : Service() {
         return START_STICKY
     }
 
-    private fun registerTelephonyListener() {
+    private fun registerTelephonyListener(attempt: Int = 1) {
         val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager ?: return
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -116,8 +117,17 @@ class CallMonitorService : Service() {
                 @Suppress("DEPRECATION")
                 telephonyManager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
             }
+            Log.i(TAG, "Telephony listener registered (attempt $attempt)")
         } catch (e: Exception) {
-            Log.w(TAG, "Could not register TelephonyCallback: ${e.message}")
+            Log.w(TAG, "Could not register TelephonyCallback (attempt $attempt): ${e.message}")
+            // Call detection is the whole point of this service - retry a couple of times
+            // rather than silently running with no listener for the rest of its lifetime.
+            if (attempt < 3) {
+                scope.launch {
+                    delay(2000L * attempt)
+                    registerTelephonyListener(attempt + 1)
+                }
+            }
         }
     }
 
@@ -152,54 +162,76 @@ class CallMonitorService : Service() {
                         if (inServiceLastState == TelephonyManager.CALL_STATE_RINGING) "MISSED" else "INCOMING"
                     } else "OUTGOING"
 
-                    var targetNumber = inServiceIncomingNumber
-                    var finalDuration = duration
-
-                    val recentCall = CallLogHelper.getMostRecentCall(this)
-                    if (recentCall != null) {
-                        if (targetNumber.isNullOrBlank() && recentCall.number.isNotBlank()) {
-                            targetNumber = recentCall.number
-                        }
-                        if (recentCall.durationSeconds > 0 && finalDuration == 0) {
-                            finalDuration = recentCall.durationSeconds
-                        }
-                    }
-
-                    val resolvedNumber = if (!targetNumber.isNullOrBlank()) targetNumber else "Unknown Number"
-                    val startTime = inServiceCallStartTime.takeIf { it > 0 } ?: (endTime - (finalDuration * 1000L))
-
-                    val settings = CallRepository.getInstance(this).settings.value
-                    if (settings.overlayEnabled) {
-                        if (PermissionUtils.isOverlayPermissionGranted(this)) {
-                            // Reliable path: a TYPE_APPLICATION_OVERLAY window is exempt from the
-                            // Android 10+ background-activity-start restriction that would otherwise
-                            // silently block CallOverlayActivity from launching out of this service.
-                            FloatingWindowOverlayService.show(
-                                context = this,
-                                phoneNumber = resolvedNumber,
-                                durationSeconds = finalDuration,
-                                callType = callType,
-                                startTime = startTime,
-                                endTime = endTime
-                            )
-                        } else {
-                            // Best-effort fallback: without overlay permission this Activity launch
-                            // is likely to be blocked by the OS while the app is backgrounded.
-                            CallOverlayActivity.launch(
-                                context = this,
-                                phoneNumber = resolvedNumber,
-                                durationSeconds = finalDuration,
-                                callType = callType,
-                                startTime = startTime,
-                                endTime = endTime
-                            )
-                        }
-                    }
+                    resolveAndShowPopup(
+                        incomingNumber = inServiceIncomingNumber,
+                        callStartTime = inServiceCallStartTime,
+                        endTime = endTime,
+                        duration = duration,
+                        callType = callType
+                    )
                 }
                 inServiceLastState = TelephonyManager.CALL_STATE_IDLE
                 inServiceCallStartTime = 0
                 inServiceIncomingNumber = null
                 inServiceIsIncoming = false
+            }
+        }
+    }
+
+    private fun resolveAndShowPopup(
+        incomingNumber: String?,
+        callStartTime: Long,
+        endTime: Long,
+        duration: Int,
+        callType: String
+    ) {
+        scope.launch {
+            var targetNumber = incomingNumber
+            var finalDuration = duration
+
+            // MISSED calls in particular: the system can write the call-log entry a beat
+            // after the telephony state already reports IDLE, so retry briefly rather than
+            // querying once and potentially getting nothing (or a stale earlier call).
+            val sinceMillis = callStartTime.takeIf { it > 0 } ?: endTime
+            val recentCall = CallLogHelper.getMostRecentCallWithRetry(this@CallMonitorService, sinceMillis)
+            if (recentCall != null) {
+                if (targetNumber.isNullOrBlank() && recentCall.number.isNotBlank()) {
+                    targetNumber = recentCall.number
+                }
+                if (recentCall.durationSeconds > 0 && finalDuration == 0) {
+                    finalDuration = recentCall.durationSeconds
+                }
+            }
+
+            val resolvedNumber = if (!targetNumber.isNullOrBlank()) targetNumber else "Unknown Number"
+            val startTime = callStartTime.takeIf { it > 0 } ?: (endTime - (finalDuration * 1000L))
+
+            val settings = CallRepository.getInstance(this@CallMonitorService).settings.value
+            if (!settings.overlayEnabled) return@launch
+
+            if (PermissionUtils.isOverlayPermissionGranted(this@CallMonitorService)) {
+                // Reliable path: a TYPE_APPLICATION_OVERLAY window is exempt from the
+                // Android 10+ background-activity-start restriction that would otherwise
+                // silently block CallOverlayActivity from launching out of this service.
+                FloatingWindowOverlayService.show(
+                    context = this@CallMonitorService,
+                    phoneNumber = resolvedNumber,
+                    durationSeconds = finalDuration,
+                    callType = callType,
+                    startTime = startTime,
+                    endTime = endTime
+                )
+            } else {
+                // Best-effort fallback: without overlay permission this Activity launch
+                // is likely to be blocked by the OS while the app is backgrounded.
+                CallOverlayActivity.launch(
+                    context = this@CallMonitorService,
+                    phoneNumber = resolvedNumber,
+                    durationSeconds = finalDuration,
+                    callType = callType,
+                    startTime = startTime,
+                    endTime = endTime
+                )
             }
         }
     }

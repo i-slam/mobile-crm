@@ -9,6 +9,7 @@ import android.provider.CallLog
 import android.provider.ContactsContract
 import android.util.Log
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.delay
 
 data class RecentCallInfo(
     val number: String,
@@ -21,6 +22,33 @@ data class RecentCallInfo(
 object CallLogHelper {
 
     private const val TAG = "CallLogHelper"
+
+    /**
+     * The system writes a call-log entry (especially for a MISSED call) asynchronously,
+     * sometimes a second or two after the telephony state has already gone IDLE. Querying
+     * immediately on state change can race that write and return stale/no data. Retries a
+     * few times, accepting any entry timestamped at or after [sinceMillis] (minus a small
+     * clock-skew buffer) as the one for the call that just ended.
+     */
+    suspend fun getMostRecentCallWithRetry(
+        context: Context,
+        sinceMillis: Long,
+        maxAttempts: Int = 4,
+        delayMs: Long = 700
+    ): RecentCallInfo? {
+        var lastResult: RecentCallInfo? = null
+        repeat(maxAttempts) { attempt ->
+            val recent = getMostRecentCall(context)
+            lastResult = recent
+            if (recent != null && recent.timestampMillis >= sinceMillis - 2000) {
+                return recent
+            }
+            if (attempt < maxAttempts - 1) delay(delayMs)
+        }
+        // Best effort: return whatever we last saw even if its timestamp looks stale,
+        // rather than silently dropping the record.
+        return lastResult
+    }
 
     fun getMostRecentCall(context: Context): RecentCallInfo? {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {

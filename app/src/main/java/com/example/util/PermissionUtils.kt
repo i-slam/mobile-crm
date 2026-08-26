@@ -14,12 +14,30 @@ import androidx.core.content.ContextCompat
 
 object PermissionUtils {
 
-    fun getRequiredRuntimePermissions(): Array<String> {
-        val list = mutableListOf(
+    /**
+     * The permissions call detection cannot function without. Deliberately excludes
+     * POST_NOTIFICATIONS: that only affects whether the foreground-service notification is
+     * visible, not whether the service itself can run. Gate CallMonitorService.start() on
+     * this set, not the full "requested" set below - otherwise a user reflexively denying
+     * the notification prompt silently breaks call detection entirely, with everything else
+     * granted.
+     */
+    fun getCriticalCallPermissions(): Array<String> {
+        return arrayOf(
             Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.READ_CALL_LOG,
             Manifest.permission.READ_CONTACTS
         )
+    }
+
+    fun areCriticalCallPermissionsGranted(context: Context): Boolean {
+        return getCriticalCallPermissions().all { perm ->
+            ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    fun getRequiredRuntimePermissions(): Array<String> {
+        val list = getCriticalCallPermissions().toMutableList()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             list.add(Manifest.permission.POST_NOTIFICATIONS)
         }

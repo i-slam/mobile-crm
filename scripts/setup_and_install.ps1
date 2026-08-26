@@ -13,9 +13,19 @@
     run died partway (e.g. ran out of disk space), just fix the underlying problem and
     run the script again.
 
+    By default, install uninstalls any existing copy of the app first (see
+    -KeepExistingInstall to skip this) - a debug build re-signed with a locally generated
+    debug.keystore won't match a build installed via Android Studio or an earlier key, so a
+    plain `adb install -r` fails with INSTALL_FAILED_UPDATE_INCOMPATIBLE in that case. The
+    tradeoff is that the app's local data/settings on the device get wiped every run.
+
 .PARAMETER ToolsDir
-    Where the JDK-independent tooling (Gradle, Android SDK) is installed. Defaults to
-    a folder in the user's profile, kept outside this repo so it isn't accidentally committed.
+    Where the JDK-independent tooling (Gradle, Android SDK) AND the Gradle dependency
+    cache (GRADLE_USER_HOME - normally ~500MB-2GB+ on a cold build) are installed.
+    Defaults to D:\android-tools specifically because C: on this machine runs close to
+    full; only the JDK itself (~400MB, installed via winget) has to live on C:.
+    GRADLE_USER_HOME is persisted as a user environment variable so it stays redirected
+    even outside this script (Android Studio, a bare `gradlew` call, etc).
 
 .PARAMETER SkipBuild
     Only install tooling + generate the wrapper; don't build or install the APK.
@@ -30,48 +40,82 @@
 #>
 
 param(
-    [string]$ToolsDir = "$env:USERPROFILE\android-tools",
+    [string]$ToolsDir = "D:\android-tools",
     [string]$JdkWingetId = "EclipseAdoptium.Temurin.21.JDK",
     [string]$GradleVersion = "9.3.1",
-    [string]$MinFreeGb = 6,
-    [switch]$SkipBuild
+    [string]$MinFreeGbTools = 6,
+    [string]$MinFreeGbSystem = 1,
+    [string]$ApplicationId = "com.aistudio.callpopup.crm",
+    [switch]$SkipBuild,
+    [switch]$KeepExistingInstall
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+$ToolsDrive = (Split-Path -Qualifier $ToolsDir) -replace ':',''
 
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 
-function Assert-FreeSpace([double]$minGb) {
-    $freeGb = (Get-PSDrive C).Free / 1GB
+function Assert-FreeSpace([string]$driveLetter, [double]$minGb, [string]$label) {
+    $freeGb = (Get-PSDrive $driveLetter).Free / 1GB
     if ($freeGb -lt $minGb) {
-        Write-Error ("Only {0:N2} GB free on C:. Need at least {1} GB free before this can run reliably (JDK + Gradle + Android SDK + dependency caches + build output all add up). Free up space and re-run." -f $freeGb, $minGb)
+        Write-Error ("Only {0:N2} GB free on {1}:. Need at least {2} GB free on {1}: for {3}. Free up space and re-run." -f $freeGb, $driveLetter, $minGb, $label)
         exit 1
     }
-    Write-Host ("Free disk space: {0:N2} GB (OK)" -f $freeGb)
+    Write-Host ("Free space on {0}:  {1:N2} GB (OK)" -f $driveLetter, $freeGb)
 }
 
 # ---------------------------------------------------------------------------
-# 0. Disk space guard - this exact script run out of space mid-build once;
+# 0. Disk space guard - this exact script ran C: out of space mid-build once;
 #    fail fast and clearly instead of dying halfway through a multi-GB setup.
+#    The heavy stuff (Gradle, Android SDK, dependency cache) is checked against
+#    $ToolsDir's drive; C: only needs headroom for the JDK + normal build churn.
 # ---------------------------------------------------------------------------
 Write-Step "Checking free disk space"
-Assert-FreeSpace $MinFreeGb
+Assert-FreeSpace $ToolsDrive $MinFreeGbTools "Gradle/Android SDK/dependency cache"
+if ($ToolsDrive -ne "C") {
+    Assert-FreeSpace "C" $MinFreeGbSystem "the JDK install and normal build churn"
+}
+
+# ---------------------------------------------------------------------------
+# Redirect GRADLE_USER_HOME (dependency cache, wrapper distributions, daemon
+# logs) onto $ToolsDir's drive - this is what actually filled C: last time,
+# not the JDK/SDK themselves. Persisted at User scope so it sticks outside
+# this script too.
+# ---------------------------------------------------------------------------
+$gradleUserHome = Join-Path $ToolsDir ".gradle-home"
+New-Item -ItemType Directory -Force -Path $gradleUserHome | Out-Null
+$env:GRADLE_USER_HOME = $gradleUserHome
+[Environment]::SetEnvironmentVariable("GRADLE_USER_HOME", $gradleUserHome, "User")
+Write-Host "GRADLE_USER_HOME = $gradleUserHome (persisted)"
 
 # ---------------------------------------------------------------------------
 # 1. JDK 21
 # ---------------------------------------------------------------------------
 Write-Step "Locating / installing JDK 21"
-$jdkRoot = Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory -Filter "jdk-21*" -ErrorAction SilentlyContinue |
-    Select-Object -First 1
-if (-not $jdkRoot) {
-    Write-Host "JDK 21 not found - installing via winget..."
-    winget install --id $JdkWingetId --silent --accept-package-agreements --accept-source-agreements
-    $jdkRoot = Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory -Filter "jdk-21*" -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if (-not $jdkRoot) { Write-Error "JDK install did not produce the expected directory under 'C:\Program Files\Eclipse Adoptium'."; exit 1 }
+
+function Find-WorkingJdk {
+    $searchRoots = @("C:\Program Files\Eclipse Adoptium", (Join-Path $ToolsDir "Eclipse Adoptium"))
+    foreach ($root in $searchRoots) {
+        if (-not (Test-Path $root)) { continue }
+        $candidate = Get-ChildItem $root -Directory -Filter "jdk-21*" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($candidate -and (Test-Path (Join-Path $candidate.FullName "bin\java.exe"))) {
+            return $candidate.FullName
+        }
+    }
+    return $null
 }
-$env:JAVA_HOME = $jdkRoot.FullName
+
+# Validate bin\java.exe actually exists, not just the directory - a JDK
+# uninstall/rollback can leave a directory tree behind with core files gone.
+$jdkHome = Find-WorkingJdk
+if (-not $jdkHome) {
+    Write-Host "No working JDK 21 found - installing via winget..."
+    winget install --id $JdkWingetId --silent --accept-package-agreements --accept-source-agreements
+    $jdkHome = Find-WorkingJdk
+    if (-not $jdkHome) { Write-Error "JDK install did not produce a working java.exe under 'C:\Program Files\Eclipse Adoptium' or '$ToolsDir\Eclipse Adoptium'."; exit 1 }
+}
+$env:JAVA_HOME = $jdkHome
 $env:Path = "$($env:JAVA_HOME)\bin;$env:Path"
 Write-Host "JAVA_HOME = $env:JAVA_HOME"
 
@@ -129,7 +173,9 @@ if (-not (Test-Path $adb) -or -not (Test-Path (Join-Path $sdkRoot "platforms\and
     Write-Host "Installing platform-tools, platforms;android-36, platforms;android-36.1, build-tools;36.0.0..."
     cmd /c "set JAVA_HOME=$($env:JAVA_HOME)&& `"$sdkManager`" platform-tools `"platforms;android-36`" `"platforms;android-36.1`" `"build-tools;36.0.0`""
 }
-Write-Host "Android SDK at $sdkRoot"
+[Environment]::SetEnvironmentVariable("ANDROID_HOME", $sdkRoot, "User")
+$env:ANDROID_HOME = $sdkRoot
+Write-Host "Android SDK at $sdkRoot (ANDROID_HOME persisted)"
 
 # ---------------------------------------------------------------------------
 # 4. Gradle wrapper + local.properties for this repo
@@ -153,7 +199,7 @@ if ($SkipBuild) {
 # 5. Build the debug APK
 # ---------------------------------------------------------------------------
 Write-Step "Building debug APK (this downloads all AGP/Kotlin/Compose/Room/Firebase dependencies on first run - can take several minutes)"
-Assert-FreeSpace $MinFreeGb
+Assert-FreeSpace $ToolsDrive $MinFreeGbTools "the dependency cache download"
 & "$RepoRoot\gradlew.bat" assembleDebug --stacktrace
 if ($LASTEXITCODE -ne 0) { Write-Error "Build failed - see output above."; exit 1 }
 
@@ -168,5 +214,17 @@ Write-Step "Installing on USB-connected device"
 Write-Host "Make sure: Developer Options > USB debugging is ON, the phone is plugged in, and you've tapped 'Allow' on the RSA fingerprint prompt on the phone screen."
 & $adb start-server
 & $adb devices
+if (-not $KeepExistingInstall) {
+    # Debug builds get re-signed with a locally generated debug.keystore, which won't match
+    # a build installed via Android Studio or a prior signing key - `install -r` alone fails
+    # with INSTALL_FAILED_UPDATE_INCOMPATIBLE in that case. Uninstalling first sidesteps that
+    # at the cost of wiping the app's local data/settings on the device every run.
+    # Pass -KeepExistingInstall to skip this and just try a normal -r install instead.
+    & $adb uninstall $ApplicationId | Out-Null
+}
 & $adb install -r $apk
-Write-Host "`nDone. If no device was listed above, connect it and re-run this script (it will skip straight to the build/install steps)." -ForegroundColor Green
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "`nInstalled successfully." -ForegroundColor Green
+} else {
+    Write-Host "`nadb install reported exit code $LASTEXITCODE - check the 'adb devices' output above for whether a device was actually listed." -ForegroundColor Yellow
+}

@@ -137,7 +137,9 @@ fun MainAppContainer() {
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
         hasRuntimePerms = PermissionUtils.areRuntimePermissionsGranted(context)
-        if (hasRuntimePerms) {
+        // Start on the critical (phone/call-log/contacts) set only - denying the
+        // notification prompt alone must not silently disable call detection.
+        if (PermissionUtils.areCriticalCallPermissionsGranted(context)) {
             CallMonitorService.start(context)
         }
     }
@@ -155,7 +157,7 @@ fun MainAppContainer() {
                 hasRuntimePerms = PermissionUtils.areRuntimePermissionsGranted(context)
                 hasOverlayPerm = PermissionUtils.isOverlayPermissionGranted(context)
                 refreshCounter++
-                if (hasRuntimePerms && !CallMonitorService.isRunning) {
+                if (PermissionUtils.areCriticalCallPermissionsGranted(context) && !CallMonitorService.isRunning) {
                     val settings = CallRepository.getInstance(context).settings.value
                     if (settings.overlayEnabled) {
                         CallMonitorService.start(context)

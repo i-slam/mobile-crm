@@ -136,7 +136,8 @@ fun HomeScreen(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
         hasRuntimePerms = PermissionUtils.areRuntimePermissionsGranted(context)
-        if (hasRuntimePerms && !CallMonitorService.isRunning) {
+        // Denying just the notification prompt must not block call detection from starting.
+        if (PermissionUtils.areCriticalCallPermissionsGranted(context) && !CallMonitorService.isRunning) {
             CallMonitorService.start(context)
             isServiceActive = true
         }

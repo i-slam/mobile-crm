@@ -169,15 +169,24 @@ There is no authentication/authorization model beyond the optional static bearer
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Reduce the chance of OEM battery managers killing the service |
 | `INTERNET`, `ACCESS_NETWORK_STATE` | WebSocket connectivity |
 
-## 7. Known Limitations
+## 7. Call-detection reliability
+
+Two mechanisms specifically target reliability issues found in real-device testing (calls, especially missed ones, silently not producing a popup):
+
+- **Critical vs. full permission sets.** `PermissionUtils.getCriticalCallPermissions()` (`READ_PHONE_STATE`, `READ_CALL_LOG`, `READ_CONTACTS`) is deliberately separate from the full requested set, which also includes `POST_NOTIFICATIONS` on API 33+. `CallMonitorService.start()` is gated on the critical set only. Earlier this was one combined set, which meant a user who denied just the notification prompt (very common, and not actually required for call detection to function) silently disabled the whole feature with no error shown anywhere.
+- **Call-log query retry.** The OS can write a call-log entry (missed calls especially) a beat after the telephony state already reports IDLE. `CallLogHelper.getMostRecentCallWithRetry()` retries the query a few times over ~2 seconds, accepting the first result timestamped at or after the call actually started, instead of a single immediate query that can race the write and return nothing or a stale earlier call.
+- **Watchdog.** `CallMonitorWatchdogWorker` (WorkManager, every 15 minutes — WorkManager's floor for periodic work) restarts `CallMonitorService` if it should be running (critical permissions granted, overlay enabled in Settings) but isn't. This is a backstop, not the primary mechanism — the foreground service itself, `START_STICKY`, and `BootReceiver` (restart on device boot) handle the common cases; the watchdog catches everything else (OOM kills, some OEM battery managers) within 15 minutes instead of leaving the app dead until next manually opened.
+- **Telephony listener registration retry.** If registering the `TelephonyCallback`/`PhoneStateListener` throws on `onCreate()`, it retries twice with backoff instead of silently running with no call detection for the service's entire lifetime.
+
+## 8. Known Limitations
 
 - **Background popup without overlay permission.** If the user declines "Display over other apps," the fallback (`CallOverlayActivity`) can be silently blocked by Android 10+'s background-activity-start restriction. The overlay permission is effectively required for reliable operation, not optional.
-- **OEM battery managers.** Even with the "ignore battery optimizations" exemption granted, some manufacturers (notably MIUI/Xiaomi, some Huawei/Honor, and older Samsung builds) apply additional, non-standard background-kill policies beyond what Android's own API exposes. There is no fully reliable way to prevent this from app code alone; users on aggressive OEM skins may need to manually allow "autostart" or disable manufacturer-specific battery restrictions.
+- **OEM battery managers.** Even with the "ignore battery optimizations" exemption granted and the watchdog described above, some manufacturers (notably MIUI/Xiaomi, some Huawei/Honor, and older Samsung builds) apply additional, non-standard background-kill policies beyond what Android's own API exposes and can prevent WorkManager itself from running promptly. There is no fully reliable way to prevent this from app code alone; users on aggressive OEM skins may need to manually allow "autostart" or disable manufacturer-specific battery restrictions.
 - **No backend included.** The WebSocket target defaults to a public echo-test server (`wss://echo.websocket.events`), which bounces the payload back but does not persist anything. A real deployment needs a backend implementing §5's contract.
 - **Single static bearer token**, no per-user auth — fine for one showroom, not for multi-tenant use.
 - **No automated instrumentation tests** beyond the AI-Studio-generated boilerplate (`ExampleUnitTest`, `ExampleRobolectricTest`, a screenshot test). None of the flows described above have test coverage yet.
 
-## 8. Build & Run
+## 9. Build & Run
 
 ```bash
 ./gradlew assembleDebug     # debug APK
