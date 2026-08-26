@@ -1,0 +1,192 @@
+[
+  {
+    "id": "VEH-002",
+    "status": "AVAILABLE",
+    "make": "BMW",
+    "model": "Série 1 Coupé",
+    "year": null,
+    "price": { "amount": 95000, "currency": "MAD" },
+    "location": { "type": "SHOWROOM", "showroomName": "Manzah Showroom", "city": "Rabat" },
+    "specifications": {
+      "fuelType": "ESSENCE",
+      "transmission": "AUTOMATIC",
+      "fiscalPowerCV": 11,
+      "mileageKm": 180000,
+      "color": null
+    }
+  },
+  {
+    "id": "VEH-003",
+    "status": "SOLD",
+    "make": "BMW",
+    "model": "Série 3",
+    "year": 2012,
+    "price": { "amount": 105000, "currency": "MAD" },
+    "location": { "type": "SHOWROOM", "showroomName": "Manzah Showroom", "city": "Rabat" },
+    "specifications": {
+      "fuelType": "ESSENCE",
+      "transmission": "AUTOMATIC",
+      "fiscalPowerCV": 11,
+      "mileageKm": 100000,
+      "color": "Blue"
+    }
+  },
+  {
+    "id": "VEH-005",
+    "status": "AVAILABLE",
+    "make": "Volkswagen",
+    "model": "Touareg",
+    "year": 2015,
+    "price": { "amount": 155000, "currency": "MAD" },
+    "location": { "type": "SHOWROOM", "showroomName": "Manzah Showroom", "city": "Rabat" },
+    "specifications": {
+      "fuelType": "DIESEL",
+      "transmission": null,
+      "fiscalPowerCV": null,
+      "mileageKm": null,
+      "color": null
+    }
+  },
+  {
+    "id": "VEH-006",
+    "status": "AVAILABLE",
+    "make": "Mini",
+    "model": "Cooper",
+    "year": 2010,
+    "price": { "amount": 97000, "currency": "MAD" },
+    "location": { "type": "SHOWROOM", "showroomName": "Manzah Showroom", "city": "Rabat" },
+    "specifications": {
+      "fuelType": null,
+      "transmission": "MANUAL",
+      "fiscalPowerCV": null,
+      "mileageKm": null,
+      "color": null
+    }
+  },
+  {
+    "id": "VEH-007",
+    "status": "AVAILABLE",
+    "make": "Mini",
+    "model": "Cooper",
+    "year": 2007,
+    "price": { "amount": 83000, "currency": "MAD" },
+    "location": { "type": "SHOWROOM", "showroomName": "Manzah Showroom", "city": "Rabat" },
+    "specifications": {
+      "fuelType": null,
+      "transmission": "MANUAL",
+      "fiscalPowerCV": null,
+      "mileageKm": null,
+      "color": null
+    }
+  },
+  {
+    "id": "VEH-008",
+    "status": "AVAILABLE",
+    "make": "Kia",
+    "model": "Picanto",
+    "year": 2021,
+    "price": { "amount": 118000, "currency": "MAD" },
+    "location": { "type": "SHOWROOM", "showroomName": "Manzah Showroom", "city": "Rabat" },
+    "specifications": {
+      "fuelType": "ESSENCE",
+      "transmission": "AUTOMATIC",
+      "fiscalPowerCV": 6,
+      "mileageKm": 141000,
+      "color": "Gris"
+    }
+  },
+  {
+    "id": "VEH-009",
+    "status": "AVAILABLE",
+    "make": "Audi",
+    "model": "Q7",
+    "year": 2010,
+    "price": { "amount": 122000, "currency": "MAD" },
+    "location": { "type": "SHOWROOM", "showroomName": "Manzah Showroom", "city": "Rabat" },
+    "specifications": {
+      "fuelType": null,
+      "transmission": null,
+      "fiscalPowerCV": null,
+      "mileageKm": null,
+      "color": "Grey"
+    }
+  },
+  {
+    "id": "VEH-011",
+    "status": "AVAILABLE",
+    "make": "Honda",
+    "model": "Accord",
+    "year": 2013,
+    "price": { "amount": 113000, "currency": "MAD" },
+    "location": { "type": "SHOWROOM", "showroomName": "Manzah Showroom", "city": "Rabat" },
+    "specifications": {
+      "fuelType": "ESSENCE",
+      "transmission": "AUTOMATIC",
+      "fiscalPowerCV": 11,
+      "mileageKm": 96000,
+      "color": null
+    },
+    "registration": {
+      "plate": null,
+      "notes": "vignette 3000 MAD"
+    }
+  },
+  {
+    "id": "VEH-014",
+    "status": "AVAILABLE",
+    "make": "Volkswagen",
+    "model": "Golf 6",
+    "year": 2013,
+    "price": { "amount": 118000, "currency": "MAD" },
+    "location": { "type": "SHOWROOM", "showroomName": "Manzah Showroom", "city": "Rabat" },
+    "specifications": {
+      "fuelType": "DIESEL",
+      "transmission": "MANUAL",
+      "fiscalPowerCV": 6,
+      "mileageKm": 240000,
+      "color": "Black"
+    },
+    "registration": {
+      "plate": "1153 | هـ | 6",
+      "notes": "vignette 650 MAD"
+    }
+  },
+  {
+    "id": "VEH-015",
+    "status": "AVAILABLE",
+    "make": "Hyundai",
+    "model": "Santa Fe",
+    "year": 2012,
+    "price": { "amount": 122000, "currency": "MAD" },
+    "location": { "type": "SHOWROOM", "showroomName": "Manzah Showroom", "city": "Rabat" },
+    "specifications": {
+      "fuelType": "DIESEL",
+      "transmission": "AUTOMATIC",
+      "fiscalPowerCV": 8,
+      "mileageKm": 250000,
+      "color": "Grey"
+    },
+    "registration": {
+      "plate": null
+    }
+  },
+  {
+    "id": "VEH-VOLVO",
+    "status": "SOLD",
+    "make": "Volvo",
+    "model": null,
+    "year": null,
+    "price": { "amount": null, "currency": "MAD" },
+    "location": { "type": "SHOWROOM", "showroomName": "Manzah Showroom", "city": "Rabat" },
+    "specifications": {
+      "fuelType": null,
+      "transmission": null,
+      "fiscalPowerCV": null,
+      "mileageKm": null,
+      "color": null
+    },
+    "registration": {
+      "notes": "أحمد الطوي"
+    }
+  }
+]

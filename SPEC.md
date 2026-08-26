@@ -33,6 +33,11 @@ Call metadata and notes are also queued and pushed to a configurable WebSocket b
 - CSV export of the full call history, shared via the system share sheet.
 - "Clear all history" (Settings → Danger Zone), with a confirmation prompt.
 
+### Vehicle inventory
+- A local vehicle inventory (make, model, year, price, fuel/transmission/mileage/color specs, showroom location, registration notes), seeded on first launch from `app/src/main/assets/seed_inventory.json`.
+- A dedicated **Inventory** tab (bottom nav) to browse/search/filter by status, add/edit vehicles, and toggle AVAILABLE/SOLD.
+- The post-call popup has a collapsible **"Vehicles Discussed"** checklist of AVAILABLE vehicles; selections are saved on the call record (`selectedVehicleIds`) and sent as `vehicle_ids` in the WebSocket payload (§5). A "Send Selected Vehicles via WhatsApp" button formats the selection into a message the same way the location/catalog quick-share buttons do.
+
 ### WebSocket sync
 - Configurable server URL + optional bearer token (Settings/WebSocket screen).
 - Every saved call record is sent as a structured JSON packet (§5) immediately; on failure it's kept `PENDING` in the local Room database and retried automatically when connectivity returns or the user taps "Flush Queue".
@@ -106,6 +111,8 @@ com.example/
 
 **`WhatsAppTemplate`** — `id`, `title`, `description`, `iconType`, `templateText` (with `{number}` / `{showroom_name}` / `{address}` / `{maps_url}` placeholders).
 
+**`Vehicle`** (Room entity, table `vehicles`) — `id` (PK, e.g. `"VEH-008"`), `status` (`AVAILABLE`/`SOLD`), `make`, `model`, `year`, and embedded `price` (`amount`, `currency`), `location` (`type`, `showroomName`, `city`), `specifications` (`fuelType`, `transmission`, `fiscalPowerCV`, `mileageKm`, `color`), `registration` (`plate`, `notes`). The same class is used both as the Room entity and as the shape Moshi parses `seed_inventory.json` into — field names match the JSON keys exactly.
+
 ## 5. WebSocket Contract
 
 The client is the source of truth for this contract today — no reference backend ships with this repo. A backend implementation should accept a JSON text frame per call save, shaped as:
@@ -128,7 +135,8 @@ The client is the source of truth for this contract today — no reference backe
   "user_input": {
     "notes": "Interested in the Italian marble collection...",
     "tags": ["🔥 Hot Lead", "📍 Showroom Visit"],
-    "actions_taken": ["SENT_SHOWROOM_LOCATION_WHATSAPP"]
+    "actions_taken": ["SENT_SHOWROOM_LOCATION_WHATSAPP"],
+    "vehicle_ids": ["VEH-008", "VEH-014"]
   },
   "showroom_info": {
     "showroom_name": "Downtown Luxury Showroom",

@@ -20,6 +20,7 @@ data class CallRecord(
     val notes: String = "",
     val tags: List<String> = emptyList(),
     val actionsTaken: List<String> = emptyList(), // e.g. "SENT_LOCATION_WHATSAPP", "SENT_CATALOG"
+    val selectedVehicleIds: List<String> = emptyList(),
     val syncStatus: String = "PENDING", // "PENDING", "SYNCED", "FAILED"
     val syncedAtMillis: Long? = null,
     val webSocketResponse: String? = null

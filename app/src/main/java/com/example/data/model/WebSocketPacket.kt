@@ -19,7 +19,8 @@ data class CallMetadataPayload(
 data class UserInputPayload(
     val notes: String,
     val tags: List<String>,
-    val actions_taken: List<String>
+    val actions_taken: List<String>,
+    val vehicle_ids: List<String> = emptyList()
 )
 
 @JsonClass(generateAdapter = true)

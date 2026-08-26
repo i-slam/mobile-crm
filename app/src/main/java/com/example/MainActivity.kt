@@ -84,6 +84,7 @@ import com.example.service.CallMonitorService
 import com.example.ui.navigation.Screen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.HistoryScreen
+import com.example.ui.screens.InventoryScreen
 import com.example.ui.screens.OnboardingScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.WebSocketScreen
@@ -117,7 +118,7 @@ fun MainAppContainer() {
     var showOnboarding by remember { mutableStateOf(!repository.isOnboardingComplete()) }
 
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
-    val screens = listOf(Screen.Home, Screen.History, Screen.WebSocket, Screen.Settings)
+    val screens = listOf(Screen.Home, Screen.History, Screen.Inventory, Screen.WebSocket, Screen.Settings)
 
     val wsClient = remember { CallWebSocketClient.getInstance() }
     val wsState by wsClient.connectionState.collectAsState()
@@ -402,6 +403,8 @@ fun MainAppContainer() {
                         )
 
                         Screen.History -> HistoryScreen()
+
+                        Screen.Inventory -> InventoryScreen()
 
                         Screen.WebSocket -> WebSocketScreen()
 

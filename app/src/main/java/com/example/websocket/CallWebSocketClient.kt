@@ -146,7 +146,8 @@ class CallWebSocketClient private constructor() {
             user_input = UserInputPayload(
                 notes = record.notes,
                 tags = record.tags,
-                actions_taken = record.actionsTaken
+                actions_taken = record.actionsTaken,
+                vehicle_ids = record.selectedVehicleIds
             ),
             showroom_info = ShowroomInfoPayload(
                 showroom_name = settings.showroomName,

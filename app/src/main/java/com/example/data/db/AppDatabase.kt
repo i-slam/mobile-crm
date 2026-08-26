@@ -6,13 +6,16 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import com.example.data.dao.CallRecordDao
+import com.example.data.dao.VehicleDao
 import com.example.data.model.CallRecord
 import com.example.data.model.StringListConverters
+import com.example.data.model.Vehicle
 
-@Database(entities = [CallRecord::class], version = 1, exportSchema = false)
+@Database(entities = [CallRecord::class, Vehicle::class], version = 2, exportSchema = false)
 @TypeConverters(StringListConverters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun callRecordDao(): CallRecordDao
+    abstract fun vehicleDao(): VehicleDao
 
     companion object {
         @Volatile

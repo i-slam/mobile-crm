@@ -43,8 +43,11 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Event
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Send
@@ -67,6 +70,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -94,6 +98,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.CallRecord
 import com.example.data.model.WhatsAppTemplate
 import com.example.data.repository.CallRepository
+import com.example.data.repository.VehicleRepository
 import com.example.ui.theme.PrimaryBlue
 import com.example.ui.theme.SecondaryGreen
 import com.example.ui.theme.Slate200
@@ -121,10 +126,12 @@ fun CallOverlayDialogContent(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repository = remember { CallRepository.getInstance(context) }
+    val vehicleRepository = remember { VehicleRepository.getInstance(context) }
     val wsClient = remember { CallWebSocketClient.getInstance() }
 
     val settings by repository.settings.collectAsState()
     val templates by repository.templates.collectAsState()
+    val availableVehicles by vehicleRepository.availableVehicles.collectAsState(initial = emptyList())
     val wsState by wsClient.connectionState.collectAsState()
 
     var editablePhoneNumber by remember(phoneNumber) { mutableStateOf(phoneNumber) }
@@ -135,12 +142,14 @@ fun CallOverlayDialogContent(
     var notesText by remember { mutableStateOf("") }
     val selectedTags = remember { mutableStateListOf<String>() }
     val actionsTaken = remember { mutableStateListOf<String>() }
+    val selectedVehicleIds = remember { mutableStateListOf<String>() }
 
     var isSaving by remember { mutableStateOf(false) }
     var saveSuccess by remember { mutableStateOf(false) }
     var showCustomTagDialog by remember { mutableStateOf(false) }
     var showAllTemplatesDialog by remember { mutableStateOf(false) }
     var showEditNumberDialog by remember { mutableStateOf(false) }
+    var vehiclesExpanded by remember { mutableStateOf(false) }
     var customTagInput by remember { mutableStateOf("") }
 
     val scrollState = rememberScrollState()
@@ -382,6 +391,115 @@ fun CallOverlayDialogContent(
                         )
                     }
                 )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Section 1b: Vehicles Discussed
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { vehiclesExpanded = !vehiclesExpanded }
+                    .testTag("vehicles_section_toggle"),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.DirectionsCar,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Vehicles Discussed" + if (selectedVehicleIds.isNotEmpty()) " (${selectedVehicleIds.size})" else "",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Icon(
+                    imageVector = if (vehiclesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (vehiclesExpanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            AnimatedVisibility(visible = vehiclesExpanded) {
+                Column(modifier = Modifier.padding(top = 6.dp)) {
+                    if (availableVehicles.isEmpty()) {
+                        Text(
+                            text = "No available vehicles in inventory.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 220.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            availableVehicles.forEach { vehicle ->
+                                val isChecked = selectedVehicleIds.contains(vehicle.id)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            if (isChecked) selectedVehicleIds.remove(vehicle.id) else selectedVehicleIds.add(vehicle.id)
+                                        }
+                                        .testTag("vehicle_checkbox_${vehicle.id}"),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = isChecked,
+                                        onCheckedChange = {
+                                            if (it) selectedVehicleIds.add(vehicle.id) else selectedVehicleIds.remove(vehicle.id)
+                                        }
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = vehicle.displayTitle,
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                        )
+                                        Text(
+                                            text = listOf(vehicle.summaryLine, vehicle.formattedPrice).filter { it.isNotBlank() }.joinToString(" • "),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (selectedVehicleIds.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    val selected = availableVehicles.filter { selectedVehicleIds.contains(it.id) }
+                                    val lines = selected.joinToString("\n") { v ->
+                                        "• ${v.displayTitle} — ${v.formattedPrice}"
+                                    }
+                                    val text = "Hello! 🚗 Here are the vehicles we discussed:\n\n$lines\n\nLet us know if you'd like more details or to schedule a viewing!"
+                                    com.example.util.ShareHelper.shareViaWhatsApp(context, editablePhoneNumber, text)
+                                    if (!actionsTaken.contains("SENT_VEHICLES_WHATSAPP")) {
+                                        actionsTaken.add("SENT_VEHICLES_WHATSAPP")
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("send_vehicles_whatsapp_button"),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Default.DirectionsCar, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Send Selected Vehicles via WhatsApp", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -708,6 +826,7 @@ fun CallOverlayDialogContent(
                             notes = notesText.trim(),
                             tags = selectedTags.toList(),
                             actionsTaken = actionsTaken.toList(),
+                            selectedVehicleIds = selectedVehicleIds.toList(),
                             syncStatus = if (wsState == WsConnectionState.CONNECTED) "SYNCED" else "PENDING"
                         )
 
