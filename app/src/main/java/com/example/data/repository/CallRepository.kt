@@ -177,6 +177,14 @@ class CallRepository(
         saveTemplatesToPrefs(newTemplates)
     }
 
+    fun isOnboardingComplete(): Boolean {
+        return prefs.getBoolean("onboarding_complete", false)
+    }
+
+    fun setOnboardingComplete() {
+        prefs.edit().putBoolean("onboarding_complete", true).apply()
+    }
+
     fun addCustomTag(tag: String) {
         val currentTags = _settings.value.customTags
         if (!currentTags.contains(tag) && tag.isNotBlank()) {

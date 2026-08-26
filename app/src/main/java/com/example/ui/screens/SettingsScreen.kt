@@ -111,6 +111,7 @@ fun SettingsScreen(
     var isAddingNewTemplate by remember { mutableStateOf(false) }
 
     var newTagInput by remember { mutableStateOf("") }
+    var showClearHistoryConfirm by remember { mutableStateOf(false) }
 
     val overlayPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -433,6 +434,80 @@ fun SettingsScreen(
                 }
             }
         }
+
+        // Section 4: Danger Zone
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("danger_zone_card"),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = CardDefaults.outlinedCardBorder().copy(
+                    brush = Brush.horizontalGradient(
+                        listOf(MaterialTheme.colorScheme.error.copy(alpha = 0.4f), Color.Transparent)
+                    )
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Danger Zone",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    )
+                    Text(
+                        text = "Permanently deletes locally stored call notes. This cannot be undone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedButton(
+                        onClick = { showClearHistoryConfirm = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("clear_all_history_button"),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Clear All Call History")
+                    }
+                }
+            }
+        }
+    }
+
+    // Clear All History Confirmation
+    if (showClearHistoryConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearHistoryConfirm = false },
+            title = { Text("Clear All Call History?") },
+            text = { Text("This will permanently delete every saved call note on this device. This cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            repository.deleteAllRecords()
+                            showClearHistoryConfirm = false
+                            Toast.makeText(context, "All call history cleared", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete All")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearHistoryConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     // Edit Template Dialog

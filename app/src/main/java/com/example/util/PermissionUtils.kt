@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
@@ -47,6 +48,39 @@ object PermissionUtils {
 
     fun areAllPermissionsGranted(context: Context): Boolean {
         return areRuntimePermissionsGranted(context) && isOverlayPermissionGranted(context)
+    }
+
+    fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return true
+        return powerManager.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
+    fun requestIgnoreBatteryOptimizations(context: Context, launcher: ActivityResultLauncher<Intent>?) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        try {
+            val intent = Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:${context.packageName}")
+            ).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            if (launcher != null) {
+                launcher.launch(intent)
+            } else {
+                context.startActivity(intent)
+            }
+        } catch (e: Exception) {
+            // Fallback: open the general battery optimization settings list
+            try {
+                val fallbackIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(fallbackIntent)
+            } catch (e2: Exception) {
+                Toast.makeText(context, "Please disable battery optimization for this app in Settings", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     fun requestOverlayPermission(context: Context, launcher: ActivityResultLauncher<Intent>?) {

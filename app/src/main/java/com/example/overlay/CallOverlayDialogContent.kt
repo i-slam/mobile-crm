@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Message
@@ -218,7 +219,12 @@ fun CallOverlayDialogContent(
 
                     Spacer(modifier = Modifier.width(12.dp))
 
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { showEditNumberDialog = true }
+                            .testTag("edit_phone_number_trigger")
+                    ) {
                         if (!resolvedCallerName.isNullOrBlank()) {
                             Text(
                                 text = resolvedCallerName!!,
@@ -230,20 +236,40 @@ fun CallOverlayDialogContent(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Text(
-                                text = editablePhoneNumber,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = editablePhoneNumber,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit phone number",
+                                    tint = MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier
+                                        .padding(start = 4.dp)
+                                        .size(12.dp)
+                                )
+                            }
                         } else {
-                            Text(
-                                text = editablePhoneNumber,
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 18.sp
-                                ),
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = editablePhoneNumber,
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit phone number",
+                                    tint = MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier
+                                        .padding(start = 6.dp)
+                                        .size(14.dp)
+                                )
+                            }
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -486,13 +512,13 @@ fun CallOverlayDialogContent(
                             onClick = {
                                 val template = templates.find { it.iconType == "LOCATION" } ?: templates.firstOrNull()
                                 val textToSend = template?.formatMessage(
-                                    phoneNumber = phoneNumber,
+                                    phoneNumber = editablePhoneNumber,
                                     showroomName = settings.showroomName,
                                     showroomAddress = settings.showroomAddress,
                                     showroomMapsUrl = settings.showroomMapsUrl
                                 ) ?: "Hello! Here is our showroom location: ${settings.showroomMapsUrl}\nAddress: ${settings.showroomAddress}"
 
-                                com.example.util.ShareHelper.shareViaWhatsApp(context, phoneNumber, textToSend)
+                                com.example.util.ShareHelper.shareViaWhatsApp(context, editablePhoneNumber, textToSend)
                                 if (!actionsTaken.contains("SENT_SHOWROOM_LOCATION_WHATSAPP")) {
                                     actionsTaken.add("SENT_SHOWROOM_LOCATION_WHATSAPP")
                                 }
@@ -527,13 +553,13 @@ fun CallOverlayDialogContent(
                             onClick = {
                                 val template = templates.find { it.iconType == "LOCATION" } ?: templates.firstOrNull()
                                 val textToSend = template?.formatMessage(
-                                    phoneNumber = phoneNumber,
+                                    phoneNumber = editablePhoneNumber,
                                     showroomName = settings.showroomName,
                                     showroomAddress = settings.showroomAddress,
                                     showroomMapsUrl = settings.showroomMapsUrl
                                 ) ?: "Hello! Here is our showroom location: ${settings.showroomMapsUrl}\nAddress: ${settings.showroomAddress}"
 
-                                com.example.util.ShareHelper.shareViaSms(context, phoneNumber, textToSend)
+                                com.example.util.ShareHelper.shareViaSms(context, editablePhoneNumber, textToSend)
                                 if (!actionsTaken.contains("SENT_LOCATION_SMS")) {
                                     actionsTaken.add("SENT_LOCATION_SMS")
                                 }
@@ -566,9 +592,9 @@ fun CallOverlayDialogContent(
                         OutlinedButton(
                             onClick = {
                                 val template = templates.find { it.iconType == "CATALOG" }
-                                val text = template?.formatMessage(phoneNumber, settings.showroomName, settings.showroomAddress, settings.showroomMapsUrl)
+                                val text = template?.formatMessage(editablePhoneNumber, settings.showroomName, settings.showroomAddress, settings.showroomMapsUrl)
                                     ?: "Hello! Here is our product catalog: https://example.com/catalog"
-                                sendWhatsAppMessage(context, phoneNumber, text)
+                                sendWhatsAppMessage(context, editablePhoneNumber, text)
                                 if (!actionsTaken.contains("SENT_CATALOG_WHATSAPP")) {
                                     actionsTaken.add("SENT_CATALOG_WHATSAPP")
                                 }
@@ -584,9 +610,9 @@ fun CallOverlayDialogContent(
                         OutlinedButton(
                             onClick = {
                                 val template = templates.find { it.iconType == "APPOINTMENT" }
-                                val text = template?.formatMessage(phoneNumber, settings.showroomName, settings.showroomAddress, settings.showroomMapsUrl)
+                                val text = template?.formatMessage(editablePhoneNumber, settings.showroomName, settings.showroomAddress, settings.showroomMapsUrl)
                                     ?: "Hi! Let's schedule your visit to ${settings.showroomName}."
-                                sendWhatsAppMessage(context, phoneNumber, text)
+                                sendWhatsAppMessage(context, editablePhoneNumber, text)
                                 if (!actionsTaken.contains("SENT_APPOINTMENT_WHATSAPP")) {
                                     actionsTaken.add("SENT_APPOINTMENT_WHATSAPP")
                                 }
@@ -724,6 +750,43 @@ fun CallOverlayDialogContent(
         }
     }
 
+    // Edit Phone Number Dialog
+    if (showEditNumberDialog) {
+        var numberInput by remember { mutableStateOf(editablePhoneNumber) }
+        AlertDialog(
+            onDismissRequest = { showEditNumberDialog = false },
+            title = { Text("Edit Phone Number") },
+            text = {
+                OutlinedTextField(
+                    value = numberInput,
+                    onValueChange = { numberInput = it },
+                    placeholder = { Text("e.g. +1 (555) 019-2834") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("edit_phone_number_input")
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (numberInput.isNotBlank()) {
+                            editablePhoneNumber = numberInput.trim()
+                        }
+                        showEditNumberDialog = false
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditNumberDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     // Custom Tag Dialog
     if (showCustomTagDialog) {
         AlertDialog(
@@ -782,12 +845,12 @@ fun CallOverlayDialogContent(
                                 .fillMaxWidth()
                                 .clickable {
                                     val text = template.formatMessage(
-                                        phoneNumber = phoneNumber,
+                                        phoneNumber = editablePhoneNumber,
                                         showroomName = settings.showroomName,
                                         showroomAddress = settings.showroomAddress,
                                         showroomMapsUrl = settings.showroomMapsUrl
                                     )
-                                    sendWhatsAppMessage(context, phoneNumber, text)
+                                    sendWhatsAppMessage(context, editablePhoneNumber, text)
                                     actionsTaken.add("SENT_${template.id.uppercase()}")
                                     showAllTemplatesDialog = false
                                 },

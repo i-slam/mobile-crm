@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Message
@@ -81,6 +82,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.CallRecord
 import com.example.data.repository.CallRepository
 import com.example.overlay.sendWhatsAppMessage
+import com.example.util.CsvExportHelper
 import com.example.ui.theme.PrimaryBlue
 import com.example.ui.theme.SecondaryGreen
 import com.example.ui.theme.TertiaryAmber
@@ -154,6 +156,31 @@ fun HistoryScreen(
                     .testTag("history_search_input"),
                 shape = RoundedCornerShape(12.dp)
             )
+
+            IconButton(
+                onClick = {
+                    if (allRecords.isEmpty()) {
+                        Toast.makeText(context, "No call records to export", Toast.LENGTH_SHORT).show()
+                        return@IconButton
+                    }
+                    val uri = CsvExportHelper.exportRecordsToCsv(context, allRecords)
+                    if (uri != null) {
+                        CsvExportHelper.shareCsv(context, uri)
+                    } else {
+                        Toast.makeText(context, "Failed to export CSV", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .testTag("export_csv_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.FileDownload,
+                    contentDescription = "Export call history as CSV",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             IconButton(
                 onClick = {

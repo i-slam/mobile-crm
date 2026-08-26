@@ -125,6 +125,7 @@ fun HomeScreen(
     // Dynamic Permission tracking
     var hasRuntimePerms by remember { mutableStateOf(PermissionUtils.areRuntimePermissionsGranted(context)) }
     var hasOverlayPerm by remember { mutableStateOf(PermissionUtils.isOverlayPermissionGranted(context)) }
+    var hasBatteryOptExempt by remember { mutableStateOf(PermissionUtils.isIgnoringBatteryOptimizations(context)) }
 
     // Simulation Test State
     var testNumber by remember { mutableStateOf("+1 (555) 489-3201") }
@@ -147,12 +148,19 @@ fun HomeScreen(
         hasOverlayPerm = PermissionUtils.isOverlayPermissionGranted(context)
     }
 
+    val batteryOptLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        hasBatteryOptExempt = PermissionUtils.isIgnoringBatteryOptimizations(context)
+    }
+
     // Refresh permission statuses on resume
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasRuntimePerms = PermissionUtils.areRuntimePermissionsGranted(context)
                 hasOverlayPerm = PermissionUtils.isOverlayPermissionGranted(context)
+                hasBatteryOptExempt = PermissionUtils.isIgnoringBatteryOptimizations(context)
                 isServiceActive = CallMonitorService.isRunning
             }
         }
@@ -665,6 +673,57 @@ fun HomeScreen(
                             FilledTonalButton(
                                 onClick = {
                                     permissionLauncher.launch(PermissionUtils.getRequiredRuntimePermissions())
+                                },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Allow", fontSize = 12.sp)
+                            }
+                        } else {
+                            Text(
+                                text = "Active",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SecondaryGreen,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
+                    )
+
+                    // Permission 3: Ignore Battery Optimizations (recommended, not blocking)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (hasBatteryOptExempt) Icons.Default.CheckCircle else Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = if (hasBatteryOptExempt) SecondaryGreen else TertiaryAmber,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "Ignore Battery Optimizations",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                )
+                                Text(
+                                    text = "Recommended: prevents OEMs from killing the background monitor",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        if (!hasBatteryOptExempt) {
+                            FilledTonalButton(
+                                onClick = {
+                                    PermissionUtils.requestIgnoreBatteryOptimizations(context, batteryOptLauncher)
                                 },
                                 shape = RoundedCornerShape(8.dp)
                             ) {

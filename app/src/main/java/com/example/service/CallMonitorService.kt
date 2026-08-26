@@ -5,7 +5,6 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -21,8 +20,8 @@ import com.example.CallPopupApplication
 import com.example.MainActivity
 import com.example.data.repository.CallRepository
 import com.example.overlay.CallOverlayActivity
-import com.example.receiver.CallStateReceiver
 import com.example.util.CallLogHelper
+import com.example.util.PermissionUtils
 import com.example.websocket.CallWebSocketClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,7 +30,6 @@ import kotlinx.coroutines.launch
 
 class CallMonitorService : Service() {
 
-    private var callStateReceiver: CallStateReceiver? = null
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -71,7 +69,6 @@ class CallMonitorService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        registerCallReceiver()
         registerTelephonyListener()
         registerNetworkMonitoring()
 
@@ -173,14 +170,30 @@ class CallMonitorService : Service() {
 
                     val settings = CallRepository.getInstance(this).settings.value
                     if (settings.overlayEnabled) {
-                        CallOverlayActivity.launch(
-                            context = this,
-                            phoneNumber = resolvedNumber,
-                            durationSeconds = finalDuration,
-                            callType = callType,
-                            startTime = startTime,
-                            endTime = endTime
-                        )
+                        if (PermissionUtils.isOverlayPermissionGranted(this)) {
+                            // Reliable path: a TYPE_APPLICATION_OVERLAY window is exempt from the
+                            // Android 10+ background-activity-start restriction that would otherwise
+                            // silently block CallOverlayActivity from launching out of this service.
+                            FloatingWindowOverlayService.show(
+                                context = this,
+                                phoneNumber = resolvedNumber,
+                                durationSeconds = finalDuration,
+                                callType = callType,
+                                startTime = startTime,
+                                endTime = endTime
+                            )
+                        } else {
+                            // Best-effort fallback: without overlay permission this Activity launch
+                            // is likely to be blocked by the OS while the app is backgrounded.
+                            CallOverlayActivity.launch(
+                                context = this,
+                                phoneNumber = resolvedNumber,
+                                durationSeconds = finalDuration,
+                                callType = callType,
+                                startTime = startTime,
+                                endTime = endTime
+                            )
+                        }
                     }
                 }
                 inServiceLastState = TelephonyManager.CALL_STATE_IDLE
@@ -217,25 +230,6 @@ class CallMonitorService : Service() {
         }
     }
 
-    private fun registerCallReceiver() {
-        if (callStateReceiver == null) {
-            callStateReceiver = CallStateReceiver()
-            val filter = IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
-            registerReceiver(callStateReceiver, filter)
-        }
-    }
-
-    private fun unregisterCallReceiver() {
-        callStateReceiver?.let {
-            try {
-                unregisterReceiver(it)
-            } catch (e: Exception) {
-                // ignore
-            }
-            callStateReceiver = null
-        }
-    }
-
     private fun buildNotification(): Notification {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -258,7 +252,6 @@ class CallMonitorService : Service() {
     }
 
     override fun onDestroy() {
-        unregisterCallReceiver()
         networkCallback?.let {
             try {
                 connectivityManager?.unregisterNetworkCallback(it)

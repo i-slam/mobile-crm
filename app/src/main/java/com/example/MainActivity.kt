@@ -84,6 +84,7 @@ import com.example.service.CallMonitorService
 import com.example.ui.navigation.Screen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.HistoryScreen
+import com.example.ui.screens.OnboardingScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.WebSocketScreen
 import com.example.ui.theme.MyApplicationTheme
@@ -111,6 +112,9 @@ class MainActivity : ComponentActivity() {
 fun MainAppContainer() {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val repository = remember { CallRepository.getInstance(context) }
+
+    var showOnboarding by remember { mutableStateOf(!repository.isOnboardingComplete()) }
 
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
     val screens = listOf(Screen.Home, Screen.History, Screen.WebSocket, Screen.Settings)
@@ -164,8 +168,9 @@ fun MainAppContainer() {
         }
     }
 
-    // Automatically fire runtime permission request on startup if any are missing
-    LaunchedEffect(Unit) {
+    // Automatically fire runtime permission request once onboarding is out of the way
+    LaunchedEffect(showOnboarding) {
+        if (showOnboarding) return@LaunchedEffect
         val missing = PermissionUtils.getMissingRuntimePermissions(context)
         if (missing.isNotEmpty()) {
             runtimePermLauncher.launch(missing.toTypedArray())
@@ -178,6 +183,16 @@ fun MainAppContainer() {
         WsConnectionState.CONNECTED -> Pair(SecondaryGreen, "WS Live")
         WsConnectionState.CONNECTING, WsConnectionState.RECONNECTING -> Pair(TertiaryAmber, "WS Connecting")
         WsConnectionState.ERROR, WsConnectionState.DISCONNECTED -> Pair(Color(0xFFEF4444), "WS Offline")
+    }
+
+    if (showOnboarding) {
+        OnboardingScreen(
+            onGetStarted = {
+                repository.setOnboardingComplete()
+                showOnboarding = false
+            }
+        )
+        return
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
