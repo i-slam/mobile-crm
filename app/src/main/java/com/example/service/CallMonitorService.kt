@@ -1,21 +1,28 @@
 package com.example.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.provider.CallLog
 import android.telephony.PhoneStateListener
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.example.CallPopupApplication
 import com.example.MainActivity
 import com.example.data.repository.CallRepository
@@ -33,12 +40,18 @@ class CallMonitorService : Service() {
 
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var callLogObserver: ContentObserver? = null
     private val scope = CoroutineScope(Dispatchers.IO + Job())
 
     private var inServiceCallStartTime: Long = 0
     private var inServiceLastState: Int = TelephonyManager.CALL_STATE_IDLE
     private var inServiceIncomingNumber: String? = null
     private var inServiceIsIncoming: Boolean = false
+
+    // Shared across both detection paths below, to dedupe when they both catch the same call.
+    private var lastHandledCallLogTimestamp: Long = System.currentTimeMillis()
+    private var lastShownNumber: String? = null
+    private var lastShownAtMillis: Long = 0
 
     companion object {
         private const val TAG = "CallMonitorService"
@@ -72,6 +85,7 @@ class CallMonitorService : Service() {
         super.onCreate()
         registerTelephonyListener()
         registerNetworkMonitoring()
+        registerCallLogObserver()
 
         // Ensure WebSocket is connected
         val repo = CallRepository.getInstance(this)
@@ -201,38 +215,102 @@ class CallMonitorService : Service() {
                 if (recentCall.durationSeconds > 0 && finalDuration == 0) {
                     finalDuration = recentCall.durationSeconds
                 }
+                if (recentCall.timestampMillis > lastHandledCallLogTimestamp) {
+                    lastHandledCallLogTimestamp = recentCall.timestampMillis
+                }
             }
 
             val resolvedNumber = if (!targetNumber.isNullOrBlank()) targetNumber else "Unknown Number"
             val startTime = callStartTime.takeIf { it > 0 } ?: (endTime - (finalDuration * 1000L))
 
-            val settings = CallRepository.getInstance(this@CallMonitorService).settings.value
-            if (!settings.overlayEnabled) return@launch
+            showPopupForCall(resolvedNumber, finalDuration, callType, startTime, endTime)
+        }
+    }
 
-            if (PermissionUtils.isOverlayPermissionGranted(this@CallMonitorService)) {
-                // Reliable path: a TYPE_APPLICATION_OVERLAY window is exempt from the
-                // Android 10+ background-activity-start restriction that would otherwise
-                // silently block CallOverlayActivity from launching out of this service.
-                FloatingWindowOverlayService.show(
-                    context = this@CallMonitorService,
-                    phoneNumber = resolvedNumber,
-                    durationSeconds = finalDuration,
-                    callType = callType,
-                    startTime = startTime,
-                    endTime = endTime
-                )
-            } else {
-                // Best-effort fallback: without overlay permission this Activity launch
-                // is likely to be blocked by the OS while the app is backgrounded.
-                CallOverlayActivity.launch(
-                    context = this@CallMonitorService,
-                    phoneNumber = resolvedNumber,
-                    durationSeconds = finalDuration,
-                    callType = callType,
-                    startTime = startTime,
-                    endTime = endTime
-                )
+    /**
+     * Second, independent detection path: a call that's rejected/screened below the telephony
+     * API (carrier-side rejection, Do Not Disturb, some OEM call-screening) never surfaces a
+     * RINGING state to this app at all, so handleCallStateTransition() never sees it - the only
+     * signal is a new MISSED row appearing in the call log. Watching the log directly catches
+     * those. showPopupForCall()'s dedup guard keeps this from double-firing on calls the
+     * telephony path already caught.
+     */
+    private fun registerCallLogObserver() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+        try {
+            val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                override fun onChange(selfChange: Boolean) {
+                    super.onChange(selfChange)
+                    checkForNewMissedCall()
+                }
             }
+            contentResolver.registerContentObserver(CallLog.Calls.CONTENT_URI, true, observer)
+            callLogObserver = observer
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not register CallLog observer: ${e.message}")
+        }
+    }
+
+    private fun checkForNewMissedCall() {
+        scope.launch {
+            // Give the content resolver a moment to settle after the change notification.
+            delay(400)
+            val recent = CallLogHelper.getMostRecentCall(this@CallMonitorService) ?: return@launch
+            if (recent.callType != "MISSED") return@launch
+            if (recent.timestampMillis <= lastHandledCallLogTimestamp) return@launch
+            lastHandledCallLogTimestamp = recent.timestampMillis
+
+            val number = recent.number.ifBlank { "Unknown Number" }
+            showPopupForCall(number, 0, "MISSED", recent.timestampMillis, recent.timestampMillis)
+        }
+    }
+
+    private fun showPopupForCall(
+        phoneNumber: String,
+        durationSeconds: Int,
+        callType: String,
+        startTime: Long,
+        endTime: Long
+    ) {
+        // Dedup guard: the telephony-state path and the CallLog observer path can both catch
+        // the same call. Suppress a second trigger for the same number within a short window
+        // rather than showing the popup twice.
+        val now = System.currentTimeMillis()
+        if (phoneNumber == lastShownNumber && (now - lastShownAtMillis) < 8000) {
+            Log.d(TAG, "Suppressing duplicate popup trigger for $phoneNumber")
+            return
+        }
+        lastShownNumber = phoneNumber
+        lastShownAtMillis = now
+
+        val settings = CallRepository.getInstance(this).settings.value
+        if (!settings.overlayEnabled) return
+
+        if (PermissionUtils.isOverlayPermissionGranted(this)) {
+            // Reliable path: a TYPE_APPLICATION_OVERLAY window is exempt from the
+            // Android 10+ background-activity-start restriction that would otherwise
+            // silently block CallOverlayActivity from launching out of this service.
+            FloatingWindowOverlayService.show(
+                context = this,
+                phoneNumber = phoneNumber,
+                durationSeconds = durationSeconds,
+                callType = callType,
+                startTime = startTime,
+                endTime = endTime
+            )
+        } else {
+            // Best-effort fallback: without overlay permission this Activity launch
+            // is likely to be blocked by the OS while the app is backgrounded.
+            CallOverlayActivity.launch(
+                context = this,
+                phoneNumber = phoneNumber,
+                durationSeconds = durationSeconds,
+                callType = callType,
+                startTime = startTime,
+                endTime = endTime
+            )
         }
     }
 
@@ -287,6 +365,13 @@ class CallMonitorService : Service() {
         networkCallback?.let {
             try {
                 connectivityManager?.unregisterNetworkCallback(it)
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+        callLogObserver?.let {
+            try {
+                contentResolver.unregisterContentObserver(it)
             } catch (e: Exception) {
                 // ignore
             }
