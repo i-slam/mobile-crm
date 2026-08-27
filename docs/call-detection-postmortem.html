@@ -1,0 +1,581 @@
+<title>Call Detection Postmortem</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --paper: #f7f5f1;
+    --paper-raised: #ffffff;
+    --ink: #1b2027;
+    --ink-soft: #4a5058;
+    --ink-faint: #7c828b;
+    --rule: #ddd8cf;
+    --accent: #2b6f6d;
+    --accent-soft: #e4f0ee;
+    --accent-strong: #1d4f4d;
+    --resolved: #3c8b5c;
+    --resolved-soft: #e5f3ea;
+    --open: #b5661f;
+    --open-soft: #fbeadb;
+    --terminal-bg: #14181d;
+    --terminal-ink: #dde3e8;
+    --terminal-accent: #7fd6c9;
+    --terminal-warn: #e7b872;
+    --terminal-dim: #7c828b;
+    --shadow: 0 1px 2px rgba(27, 32, 39, 0.06), 0 6px 20px rgba(27, 32, 39, 0.05);
+    color-scheme: light;
+  }
+
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --paper: #14171b;
+      --paper-raised: #1b1f24;
+      --ink: #eceef0;
+      --ink-soft: #b7bcc3;
+      --ink-faint: #82888f;
+      --rule: #2c3138;
+      --accent: #5fb8b0;
+      --accent-soft: #1c2b2a;
+      --accent-strong: #8fd4cb;
+      --resolved: #6fc491;
+      --resolved-soft: #16261d;
+      --open: #e0a15c;
+      --open-soft: #2b2013;
+      --terminal-bg: #0b0d10;
+      --terminal-ink: #d7dde2;
+      --terminal-accent: #7fd6c9;
+      --terminal-warn: #e7b872;
+      --terminal-dim: #676d74;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 24px rgba(0, 0, 0, 0.35);
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #14171b;
+    --paper-raised: #1b1f24;
+    --ink: #eceef0;
+    --ink-soft: #b7bcc3;
+    --ink-faint: #82888f;
+    --rule: #2c3138;
+    --accent: #5fb8b0;
+    --accent-soft: #1c2b2a;
+    --accent-strong: #8fd4cb;
+    --resolved: #6fc491;
+    --resolved-soft: #16261d;
+    --open: #e0a15c;
+    --open-soft: #2b2013;
+    --terminal-bg: #0b0d10;
+    --terminal-ink: #d7dde2;
+    --terminal-accent: #7fd6c9;
+    --terminal-warn: #e7b872;
+    --terminal-dim: #676d74;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 24px rgba(0, 0, 0, 0.35);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: var(--accent-soft); color: var(--accent-strong); }
+
+  .page {
+    max-width: 840px;
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+  }
+
+  code, .mono {
+    font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- Header ---------- */
+
+  header.report-head {
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 28px;
+    margin-bottom: 40px;
+  }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    font-size: clamp(28px, 4vw, 38px);
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    margin: 0 0 12px;
+    text-wrap: balance;
+  }
+
+  .dek {
+    font-size: 17px;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 22px;
+  }
+
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 28px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+  }
+
+  .meta-row dt { font-weight: 600; color: var(--ink-soft); display: inline; }
+  .meta-row dd { display: inline; margin: 0 0 0 6px; }
+  .meta-item { display: flex; gap: 0; }
+
+  .status-strip {
+    display: flex;
+    gap: 10px;
+    margin-top: 22px;
+  }
+
+  .status-chip {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .status-chip.resolved { background: var(--resolved-soft); color: var(--resolved); }
+  .status-chip.open { background: var(--open-soft); color: var(--open); }
+  .status-chip strong { font-size: 17px; font-weight: 700; }
+
+  /* ---------- Sections ---------- */
+
+  section { margin-bottom: 44px; }
+
+  h2 {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 18px;
+    font-family: "IBM Plex Mono", monospace;
+  }
+
+  p { max-width: 66ch; margin: 0 0 14px; color: var(--ink); }
+  p.lede { font-size: 17px; color: var(--ink-soft); }
+
+  .callout {
+    background: var(--paper-raised);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+    max-width: 66ch;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+
+  /* ---------- Findings timeline ---------- */
+
+  .findings { position: relative; }
+
+  .finding {
+    position: relative;
+    padding: 0 0 36px 44px;
+    border-left: 2px solid var(--rule);
+    margin-left: 13px;
+  }
+  .finding:last-child { border-left-color: transparent; padding-bottom: 4px; }
+
+  .finding-marker {
+    position: absolute;
+    left: -14px;
+    top: 2px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--paper);
+    border: 2px solid var(--accent);
+    color: var(--accent);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .finding-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+
+  .finding-title {
+    font-size: 18.5px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+  }
+
+  .pill {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+  .pill.resolved { background: var(--resolved-soft); color: var(--resolved); }
+  .pill.open { background: var(--open-soft); color: var(--open); }
+
+  .finding-sub { color: var(--ink-faint); font-size: 14px; margin-bottom: 14px; }
+
+  .label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 16px 0 6px;
+  }
+
+  /* ---------- Terminal evidence blocks ---------- */
+
+  .term {
+    background: var(--terminal-bg);
+    color: var(--terminal-ink);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    line-height: 1.65;
+    overflow-x: auto;
+    max-width: 100%;
+    box-shadow: var(--shadow);
+  }
+  .term .path { color: var(--terminal-dim); }
+  .term .hl { color: var(--terminal-accent); }
+  .term .warn { color: var(--terminal-warn); }
+  .term pre { margin: 0; white-space: pre; }
+
+  .commit {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--accent-strong);
+    background: var(--accent-soft);
+    padding: 3px 9px 3px 7px;
+    border-radius: 5px;
+    margin-top: 10px;
+  }
+  .commit::before { content: "⎇"; opacity: 0.7; }
+
+  /* ---------- Checklist ---------- */
+
+  .checklist { list-style: none; margin: 0; padding: 0; max-width: 66ch; }
+  .checklist li {
+    display: flex;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .checklist li:last-child { border-bottom: none; }
+  .check-num {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--open);
+    background: var(--open-soft);
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .checklist strong { display: block; margin-bottom: 2px; }
+  .checklist span { color: var(--ink-soft); font-size: 14.5px; }
+
+  /* ---------- Appendix table ---------- */
+
+  .appendix-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  @media (min-width: 640px) {
+    .appendix-grid { grid-template-columns: 1fr 1fr; }
+  }
+
+  table.files {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  table.files caption {
+    text-align: left;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 10px;
+  }
+  table.files td {
+    padding: 7px 0;
+    border-bottom: 1px solid var(--rule);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+  table.files tr:last-child td { border-bottom: none; }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 20px;
+    border-top: 1px solid var(--rule);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="report-head">
+    <div class="eyebrow">Incident report · mobile-crm</div>
+    <h1>Call Detection Postmortem</h1>
+    <p class="dek">Why the post-call popup wasn't appearing, what six root causes turned out to be, and the one that's still open on this specific device.</p>
+    <dl class="meta-row">
+      <div class="meta-item"><dt>Branch</dt><dd class="mono">feat/inventory-manager</dd></div>
+      <div class="meta-item"><dt>Device</dt><dd class="mono">Tecno Spark 20C (Transsion / HiOS)</dd></div>
+      <div class="meta-item"><dt>Package</dt><dd class="mono">com.aistudio.callpopup.crm</dd></div>
+    </dl>
+    <div class="status-strip">
+      <div class="status-chip resolved"><strong>6</strong> fixed &amp; verified</div>
+      <div class="status-chip open"><strong>1</strong> open — device setting</div>
+    </div>
+  </header>
+
+  <section>
+    <h2>Reported symptom</h2>
+    <p class="lede">"The app must show the popup with current permissions — it still fails to capture missed calls and others. The service should never sleep."</p>
+    <p>Two separate complaints turned out to share no single cause: the service sometimes wasn't running at all, and when it was, the popup itself could fail to render. Six distinct, independently-confirmed bugs were found across both. This document walks through each one in the order it was found, since each fix exposed the next problem underneath it.</p>
+  </section>
+
+  <section>
+    <h2>Findings</h2>
+    <div class="findings">
+
+      <div class="finding">
+        <div class="finding-marker">1</div>
+        <div class="finding-head">
+          <div class="finding-title">Notification permission silently disabled detection</div>
+          <span class="pill resolved">Resolved</span>
+        </div>
+        <div class="finding-sub">CallMonitorService never started for anyone who denied the notification prompt</div>
+        <p><code>PermissionUtils.getRequiredRuntimePermissions()</code> bundled <code>POST_NOTIFICATIONS</code> into the same set as <code>READ_PHONE_STATE</code> / <code>READ_CALL_LOG</code> / <code>READ_CONTACTS</code>, and every call site gated <code>CallMonitorService.start()</code> on that combined set. Denying just the notification prompt — common, and not actually required for detection to work — silently prevented the service from ever starting, with no error surfaced anywhere.</p>
+        <div class="label">Fix</div>
+        <p>Split into a critical set (phone/call-log/contacts, gates service start) and a full set (adds notifications, drives the permission-request UI only).</p>
+        <span class="commit">b7b3785</span>
+      </div>
+
+      <div class="finding">
+        <div class="finding-marker">2</div>
+        <div class="finding-head">
+          <div class="finding-title">Call-log query raced the OS's own write</div>
+          <span class="pill resolved">Resolved</span>
+        </div>
+        <div class="finding-sub">Missed calls specifically — the write can land a beat after the state goes IDLE</div>
+        <p>The number/duration for a just-ended call was resolved by querying <code>CallLog.Calls.CONTENT_URI</code> exactly once, immediately on the <code>IDLE</code> transition. For missed calls in particular, Android sometimes writes that log entry a second or two later, so the single query could return nothing or a stale prior call.</p>
+        <div class="label">Fix</div>
+        <p><code>CallLogHelper.getMostRecentCallWithRetry()</code> retries for ~2s, accepting the first row timestamped at or after the call actually started.</p>
+        <span class="commit">b7b3785</span>
+      </div>
+
+      <div class="finding">
+        <div class="finding-marker">3</div>
+        <div class="finding-head">
+          <div class="finding-title">Screened calls never reached the telephony listener</div>
+          <span class="pill resolved">Resolved</span>
+        </div>
+        <div class="finding-sub">A call rejected below the telephony API never surfaces a RINGING state at all</div>
+        <p>Detection relied solely on <code>TelephonyCallback</code> watching for <code>RINGING → IDLE</code>. A call rejected by the carrier, Do Not Disturb, or OEM call-screening never generates a <code>RINGING</code> event on-device — the only trace is a <code>MISSED</code> row appearing later in the call log, which the telephony-only approach had no way to see.</p>
+        <div class="label">Fix</div>
+        <p>Added a second, independent path: a <code>ContentObserver</code> on <code>CallLog.Calls.CONTENT_URI</code> that triggers directly off a new <code>MISSED</code> row. Both paths converge on one <code>showPopupForCall()</code>, deduped by phone number within an 8s window.</p>
+        <span class="commit">7027fe6</span>
+      </div>
+
+      <div class="finding">
+        <div class="finding-marker">4</div>
+        <div class="finding-head">
+          <div class="finding-title">The overlay window could hang the entire app</div>
+          <span class="pill resolved">Resolved</span>
+        </div>
+        <div class="finding-sub">Confirmed on-device: a Binder call into this OEM's WindowManagerService never returns</div>
+        <p>Diagnosed live over adb by inserting a fake <code>MISSED</code> row and watching the process. The pipeline ran correctly and started <code>FloatingWindowOverlayService</code> — which then froze. <code>top</code> showed the process sitting in kernel state <code>D</code> (uninterruptible sleep) at 0% CPU, unchanging across repeated samples: a genuine hang, not slowness.</p>
+        <div class="term"><pre> PID   USER      S  %CPU  TIME+   PROCESS
+<span class="hl">25159</span> u0_a278   <span class="warn">D</span>  0.0   0:35.79 com.aistudio.callpopup.crm</pre></div>
+        <p>Because that Service originally shared a process — and a main thread — with <code>CallMonitorService</code>, the hang froze call detection along with the overlay. This exactly matched the original report that the popup "only shows right after opening the app": each reopen bought one working attempt before the process wedged again.</p>
+        <div class="label">First attempt — broke the overlay outright</div>
+        <p>Moved the <code>WindowManager</code>/<code>ComposeView</code> work to a background <code>HandlerThread</code>. Compose's <code>WindowRecomposer</code> calls <code>LifecycleRegistry.addObserver()</code> internally during <code>onAttachedToWindow()</code>, and AndroidX Lifecycle throws unconditionally if that happens off the main thread — <code>ComposeView.addView()</code> genuinely cannot leave main.</p>
+        <div class="term"><pre>FATAL EXCEPTION: FloatingOverlayWindowThread
+<span class="hl">java.lang.IllegalStateException</span>: Method addObserver must be called on the main thread
+  <span class="path">at androidx.lifecycle.LifecycleRegistry.enforceMainThreadIfNeeded</span>
+  <span class="path">at androidx.compose.ui.platform.WindowRecomposer_androidKt.createLifecycleAwareWindowRecomposer</span></pre></div>
+        <div class="label">Actual fix — process isolation</div>
+        <p><code>FloatingWindowOverlayService</code> now runs in its own process (<code>android:process=":overlay"</code>). A hang there can no longer take <code>CallMonitorService</code>'s process down with it. <code>AppDatabase</code> gained <code>enableMultiInstanceInvalidation()</code> so Room's queries stay in sync across the process boundary.</p>
+        <span class="commit">b26a2d2</span>
+      </div>
+
+      <div class="finding">
+        <div class="finding-marker">5</div>
+        <div class="finding-head">
+          <div class="finding-title">One failed coroutine silently broke all future detection</div>
+          <span class="pill resolved">Resolved</span>
+        </div>
+        <div class="finding-sub">Worked exactly once per service start, then went completely silent — no crash, no log</div>
+        <p><code>CallMonitorService</code>'s long-lived <code>CoroutineScope</code> used a plain <code>Job()</code>. Any uncaught exception in one launched coroutine cancels a plain Job's whole subtree — every subsequent <code>scope.launch { }</code> becomes a silent no-op, forever, with nothing written to logcat. That's a precise match for what testing showed: the CallLog-observer path fired once after each fresh start, then nothing — for artificial triggers <em>and</em> a genuine cellular missed call.</p>
+        <div class="label">Fix</div>
+        <p>Switched to <code>SupervisorJob()</code> plus a <code>CoroutineExceptionHandler</code> that logs any future failure instead of letting it vanish.</p>
+        <span class="commit">e1909c7</span>
+      </div>
+
+      <div class="finding">
+        <div class="finding-marker">6</div>
+        <div class="finding-head">
+          <div class="finding-title">The new :overlay process crashed on its own Application init</div>
+          <span class="pill resolved">Resolved</span>
+        </div>
+        <div class="finding-sub">Fallout from the process split in #4 — caught the same night, before it shipped</div>
+        <p>Android runs <code>Application.onCreate()</code> fresh in every process, including the new <code>:overlay</code> one. It unconditionally called <code>WorkManager.getInstance()</code> to schedule the watchdog worker — but WorkManager's auto-init <code>ContentProvider</code> only runs in the main process. The <code>:overlay</code> process crashed 3 seconds after spawning, every time, before the popup could ever render.</p>
+        <div class="term"><pre>FATAL EXCEPTION: main
+Process: com.aistudio.callpopup.crm<span class="hl">:overlay</span>, PID: 15505
+java.lang.RuntimeException: Unable to create application com.example.CallPopupApplication:
+  <span class="warn">java.lang.IllegalStateException</span>: WorkManager is not initialized properly.</pre></div>
+        <div class="label">Fix</div>
+        <p>Added an <code>isMainProcess()</code> check; the watchdog now only schedules from the main process.</p>
+        <span class="commit">f296a89</span>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Confirmed working</h2>
+    <div class="callout">
+      <p>With all six fixes in place and the app in the foreground, an injected <code>MISSED</code> call log row ran the full pipeline end to end: <code>ContentObserver</code> → <code>checkForNewMissedCall</code> → <code>showPopupForCall</code> → <code>FloatingWindowOverlayService</code> spawning cleanly in its own process → <code>addView</code> succeeding. The popup rendered, and you confirmed it visually on-screen.</p>
+    </div>
+    <div class="term" style="margin-top:14px"><pre>I CallMonitorService: checkForNewMissedCall: recent=RecentCallInfo(number=+15550192856, callType=MISSED)
+I CallMonitorService: showPopupForCall: overlayEnabled=true overlayPermissionGranted=true
+I FloatingWindowOverlay: onStartCommand: canDrawOverlays=true
+I FloatingWindowOverlay: <span class="hl">showOverlay: addView succeeded</span></pre></div>
+  </section>
+
+  <section>
+    <h2>Still open</h2>
+    <div class="finding" style="border-left-color: var(--rule); margin-left: 0; padding-left: 0;">
+      <div class="finding-head">
+        <div class="finding-title">Background delivery is silent on this device</div>
+        <span class="pill open">Open</span>
+      </div>
+      <div class="finding-sub">Not a hang — a device-level restriction on what a backgrounded process may do</div>
+      <p>With the app merely backgrounded (service alive, not swiped away), neither an injected call-log row nor a genuine cellular missed call produced any response: zero CPU, zero log output, not even routine GC noise. Thread inspection ruled out a hang — every thread, including the dedicated detection thread, was healthy and idle.</p>
+      <p>Standard Android Doze exemption is already granted and confirmed present in the device's own idle whitelist:</p>
+      <div class="term"><pre>$ adb shell dumpsys deviceidle whitelist | grep aistudio
+<span class="hl">user,com.aistudio.callpopup.crm,10287</span></pre></div>
+      <p>That rules out the usual battery-optimization culprit. What's left is almost certainly Transsion/HiOS's own background-process management layer, sitting above stock Android's APIs and outside what an app can request permission for in code.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Next steps</h2>
+    <ol class="checklist">
+      <li>
+        <span class="check-num">1</span>
+        <div><strong>Find the OEM's process manager</strong><span>Look for a "Phone Manager," "Security," or "Optimizer" app — usually a separate icon, not inside Settings.</span></div>
+      </li>
+      <li>
+        <span class="check-num">2</span>
+        <div><strong>Enable Autostart for this app</strong><span>Inside that app, find "Autostart," "Startup Manager," or "App Launch Management," and allow it for com.aistudio.callpopup.crm.</span></div>
+      </li>
+      <li>
+        <span class="check-num">3</span>
+        <div><strong>Check for a separate background-activity toggle</strong><span>Settings → Battery → App management sometimes has a per-app background permission distinct from the Doze exemption already granted.</span></div>
+      </li>
+      <li>
+        <span class="check-num">4</span>
+        <div><strong>If none of that surfaces</strong><span>Test on a second, less locked-down device to confirm the six code fixes hold there — that would isolate this as fully device-specific rather than something still to chase in the app.</span></div>
+      </li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Appendix</h2>
+    <div class="appendix-grid">
+      <table class="files">
+        <caption>Files touched</caption>
+        <tbody>
+          <tr><td>CallMonitorService.kt</td></tr>
+          <tr><td>FloatingWindowOverlayService.kt</td></tr>
+          <tr><td>CallLogHelper.kt</td></tr>
+          <tr><td>PermissionUtils.kt</td></tr>
+          <tr><td>CallPopupApplication.kt</td></tr>
+          <tr><td>CallMonitorWatchdogWorker.kt</td></tr>
+          <tr><td>AppDatabase.kt</td></tr>
+          <tr><td>AndroidManifest.xml</td></tr>
+          <tr><td>MainActivity.kt, HomeScreen.kt</td></tr>
+        </tbody>
+      </table>
+      <table class="files">
+        <caption>Commits, in order</caption>
+        <tbody>
+          <tr><td>b7b3785 — permission gating + call-log retry + watchdog</td></tr>
+          <tr><td>7027fe6 — CallLog observer, second detection path</td></tr>
+          <tr><td>71e7eaf — background thread (reverted)</td></tr>
+          <tr><td>b26a2d2 — :overlay process isolation</td></tr>
+          <tr><td>e1909c7 — SupervisorJob fix</td></tr>
+          <tr><td>f296a89 — main-process-only WorkManager guard</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Diagnosed live over adb against a physical device — every finding above traces to a captured log, stack trace, or process-state sample, not speculation.
+  </footer>
+
+</div>
