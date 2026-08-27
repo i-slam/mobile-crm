@@ -386,7 +386,7 @@
     </dl>
     <div class="status-strip">
       <div class="status-chip resolved"><strong>6</strong> fixed &amp; verified</div>
-      <div class="status-chip open"><strong>1</strong> open — device setting</div>
+      <div class="status-chip open"><strong>1</strong> open — OEM restriction</div>
     </div>
   </header>
 
@@ -512,12 +512,24 @@ I FloatingWindowOverlay: <span class="hl">showOverlay: addView succeeded</span><
         <div class="finding-title">Background delivery is silent on this device</div>
         <span class="pill open">Open</span>
       </div>
-      <div class="finding-sub">Not a hang — a device-level restriction on what a backgrounded process may do</div>
+      <div class="finding-sub">Every standard Android mechanism checked is already correctly configured — and delivery still fails</div>
       <p>With the app merely backgrounded (service alive, not swiped away), neither an injected call-log row nor a genuine cellular missed call produced any response: zero CPU, zero log output, not even routine GC noise. Thread inspection ruled out a hang — every thread, including the dedicated detection thread, was healthy and idle.</p>
-      <p>Standard Android Doze exemption is already granted and confirmed present in the device's own idle whitelist:</p>
+      <p>A minimal standalone reproduction app was built specifically to isolate this from mobile-crm's other complexity (Room, WorkManager, WebSocket, telephony) - just a bare, permission-less <code>BroadcastReceiver</code> and an overlay Service, nothing else. It rigorously ruled out every documented cause, one at a time:</p>
       <div class="term"><pre>$ adb shell dumpsys deviceidle whitelist | grep aistudio
-<span class="hl">user,com.aistudio.callpopup.crm,10287</span></pre></div>
-      <p>That rules out the usual battery-optimization culprit. What's left is almost certainly Transsion/HiOS's own background-process management layer, sitting above stock Android's APIs and outside what an app can request permission for in code.</p>
+<span class="hl">user,com.aistudio.callpopup.crm,10287</span>                    # Doze exemption: granted
+
+$ adb shell dumpsys deviceidle | grep mState
+<span class="hl">mState=ACTIVE mLightState=ACTIVE</span>                          # System not even in Doze right now
+
+# Phone Master -> App Launch (Autostart): "Allowed"          # not the blocker
+# Settings -> App info -> Battery: "Unrestricted"             # not the blocker
+
+$ adb shell am broadcast -n com.aistudio.popuptest/.TriggerReceiver \
+    -a com.aistudio.popuptest.ACTION_SHOW_POPUP --es variant same
+Broadcasting: Intent { ... cmp=com.aistudio.popuptest/.TriggerReceiver ... }
+Broadcast completed: result=0
+<span class="warn">[TriggerReceiver never logs onReceive() - with or without an active foreground service]</span></pre></div>
+      <p>That last test is the one that matters: a fully-<em>explicit</em> broadcast, naming the exact component, to a receiver with no permission requirement at all, sent while a foreground service was confirmed running - and it still never fires. Explicit broadcasts and foreground-service presence are supposed to be exempt from Android's standard background-execution limits. Ruling all of this out leaves only one explanation: Transsion/HiOS enforces a background-process restriction beneath every documented Android API, one an app cannot detect, request an exemption for, or work around from code.</p>
     </div>
   </section>
 
@@ -526,19 +538,15 @@ I FloatingWindowOverlay: <span class="hl">showOverlay: addView succeeded</span><
     <ol class="checklist">
       <li>
         <span class="check-num">1</span>
-        <div><strong>Find the OEM's process manager</strong><span>Look for a "Phone Manager," "Security," or "Optimizer" app — usually a separate icon, not inside Settings.</span></div>
+        <div><strong>Not a settings hunt anymore</strong><span>Autostart, Battery Usage, and the Doze whitelist are all confirmed already correct on this device via adb - there is no remaining toggle to go find.</span></div>
       </li>
       <li>
         <span class="check-num">2</span>
-        <div><strong>Enable Autostart for this app</strong><span>Inside that app, find "Autostart," "Startup Manager," or "App Launch Management," and allow it for com.aistudio.callpopup.crm.</span></div>
+        <div><strong>Test on a second, less locked-down device</strong><span>The one remaining way to confirm this is fully device-specific rather than something still to chase in the app - the code itself is proven correct (foreground popup renders end to end).</span></div>
       </li>
       <li>
         <span class="check-num">3</span>
-        <div><strong>Check for a separate background-activity toggle</strong><span>Settings → Battery → App management sometimes has a per-app background permission distinct from the Doze exemption already granted.</span></div>
-      </li>
-      <li>
-        <span class="check-num">4</span>
-        <div><strong>If none of that surfaces</strong><span>Test on a second, less locked-down device to confirm the six code fixes hold there — that would isolate this as fully device-specific rather than something still to chase in the app.</span></div>
+        <div><strong>If it must work reliably on this exact device</strong><span>The only architecture known to get materially stronger background guarantees on Android is a full <code>InCallService</code>/default-dialer implementation (see the separate note on why <code>com.aistudio.smartcaller.xkzpmv</code> uses that approach) - a much larger scope and risk increase, not a small fix.</span></div>
       </li>
     </ol>
   </section>
