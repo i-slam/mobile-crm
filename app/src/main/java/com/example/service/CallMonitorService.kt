@@ -30,9 +30,10 @@ import com.example.overlay.CallOverlayActivity
 import com.example.util.CallLogHelper
 import com.example.util.PermissionUtils
 import com.example.websocket.CallWebSocketClient
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executor
@@ -42,7 +43,16 @@ class CallMonitorService : Service() {
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var callLogObserver: ContentObserver? = null
-    private val scope = CoroutineScope(Dispatchers.IO + Job())
+
+    // SupervisorJob, not a plain Job: this scope stays alive for the whole service lifetime and
+    // launches many independent coroutines (popup resolution, CallLog checks, WS reconnects). A
+    // plain Job would let one uncaught exception in any of them cancel the shared parent job,
+    // silently turning every future scope.launch{} into a no-op with no crash and no log line -
+    // exactly the kind of failure that's next to impossible to diagnose after the fact.
+    private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e(TAG, "Unhandled exception in CallMonitorService coroutine", throwable)
+    }
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() + coroutineExceptionHandler)
 
     // Telephony callback + CallLog observer dispatch on a dedicated thread rather than main -
     // this app's main thread has been observed to hang (a WindowManager overlay call blocking
