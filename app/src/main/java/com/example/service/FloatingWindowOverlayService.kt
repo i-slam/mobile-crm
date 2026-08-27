@@ -5,8 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
-import android.os.Handler
-import android.os.HandlerThread
 import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
@@ -28,8 +26,6 @@ class FloatingWindowOverlayService : Service(), LifecycleOwner, SavedStateRegist
 
     private var windowManager: WindowManager? = null
     private var overlayView: ComposeView? = null
-    private var overlayThread: HandlerThread? = null
-    private var overlayHandler: Handler? = null
 
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
@@ -77,11 +73,6 @@ class FloatingWindowOverlayService : Service(), LifecycleOwner, SavedStateRegist
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-
-        val thread = HandlerThread("FloatingOverlayWindowThread")
-        thread.start()
-        overlayThread = thread
-        overlayHandler = Handler(thread.looper)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -103,21 +94,14 @@ class FloatingWindowOverlayService : Service(), LifecycleOwner, SavedStateRegist
             return START_NOT_STICKY
         }
 
-        // WindowManager.addView() for this overlay has been observed to hang indefinitely on
-        // at least one OEM build (Transsion/HiOS) - a Binder call to WindowManagerService that
-        // never returns. Since this Service shares a process (and therefore a main thread) with
-        // CallMonitorService, a hang here on the main thread would freeze call detection too.
-        // Doing the actual window work on a dedicated thread contains the damage to this one
-        // overlay attempt instead of the whole app.
-        val handler = overlayHandler
-        if (handler == null) {
-            Log.e(TAG, "onStartCommand: overlay handler not available, stopping self")
-            stopSelf()
-            return START_NOT_STICKY
-        }
-        handler.post {
-            showOverlay(phoneNumber, durationSeconds, callType, startTime, endTime)
-        }
+        // NOTE: addView() must run on the main thread - Compose's ComposeView internally calls
+        // LifecycleRegistry.addObserver() (via WindowRecomposer) as part of onAttachedToWindow(),
+        // and that call unconditionally throws IllegalStateException off the main thread (tried
+        // moving this to a background thread; it broke the overlay outright rather than avoiding
+        // the hang). A one-off hang was observed here during rapid repeated test triggers earlier
+        // in development; if it recurs reliably, the real fix is running this Service in its own
+        // process (android:process) rather than fighting Compose's main-thread requirement.
+        showOverlay(phoneNumber, durationSeconds, callType, startTime, endTime)
         return START_NOT_STICKY
     }
 
@@ -189,8 +173,7 @@ class FloatingWindowOverlayService : Service(), LifecycleOwner, SavedStateRegist
     }
 
     override fun onDestroy() {
-        overlayHandler?.post { removeOverlay() }
-        overlayThread?.quitSafely()
+        removeOverlay()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)

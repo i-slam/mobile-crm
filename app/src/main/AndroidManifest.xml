@@ -67,10 +67,17 @@
                 android:value="Monitors call states to present CRM note dialog and sync metadata via WebSocket" />
         </service>
 
-        <!-- System WindowManager Floating Overlay Service -->
+        <!-- System WindowManager Floating Overlay Service.
+             Runs in its own process: on at least one real device (Tecno/HiOS)
+             WindowManager.addView() for this overlay was confirmed (via adb - the process sat
+             in kernel state D, uninterruptible sleep, at 0% CPU) to hang indefinitely on a
+             Binder call into the OEM's WindowManagerService. Isolating this Service into its
+             own process means that hang can only take down the overlay attempt, not
+             CallMonitorService and the rest of the app running in the main process. -->
         <service
             android:name=".service.FloatingWindowOverlayService"
-            android:exported="false" />
+            android:exported="false"
+            android:process=":overlay" />
 
         <!-- FileProvider for sharing exported CSV call history files -->
         <provider
