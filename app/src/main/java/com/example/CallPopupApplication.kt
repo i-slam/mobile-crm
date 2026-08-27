@@ -1,9 +1,11 @@
 package com.example
 
+import android.app.ActivityManager
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import android.os.Process
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -31,7 +33,23 @@ class CallPopupApplication : Application() {
         // Eager initialize repository and websocket
         CallRepository.getInstance(this)
 
-        scheduleCallMonitorWatchdog()
+        // FloatingWindowOverlayService runs in its own ":overlay" process (see
+        // AndroidManifest.xml), which means Application.onCreate() runs again there too.
+        // WorkManager's auto-init ContentProvider only runs in the main process, so calling
+        // WorkManager.getInstance() from the :overlay process crashes it immediately with
+        // "WorkManager is not initialized properly". The watchdog only needs to run once.
+        if (isMainProcess()) {
+            scheduleCallMonitorWatchdog()
+        }
+    }
+
+    private fun isMainProcess(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return getProcessName() == packageName
+        }
+        val activityManager = getSystemService(ActivityManager::class.java) ?: return true
+        val myPid = Process.myPid()
+        return activityManager.runningAppProcesses.orEmpty().any { it.pid == myPid && it.processName == packageName }
     }
 
     private fun scheduleCallMonitorWatchdog() {
